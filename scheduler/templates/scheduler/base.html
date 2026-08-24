@@ -1,0 +1,104 @@
+{% load static %}
+<!doctype html>
+<html lang="en" class="no-js">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="theme-color" content="#123c2d">
+  <title>{% if page_title %}{{ page_title }} · {% endif %}USM Scheduler</title>
+  <link rel="stylesheet" href="{% static 'scheduler/css/app.css' %}">
+  <script>document.documentElement.classList.replace('no-js', 'js');</script>
+  <script src="{% static 'scheduler/js/app.js' %}" defer></script>
+  {% block extra_head %}{% endblock %}
+</head>
+<body>
+  <a class="skip-link" href="#main-content">Skip to main content</a>
+  <div class="app-shell">
+    <aside class="sidebar" id="site-navigation" aria-label="Primary navigation">
+      <a class="brand" href="{% url 'scheduler:dashboard' %}" aria-label="USM Scheduler home">
+        <span class="brand__mark" aria-hidden="true">USM</span>
+        <span>
+          <strong>Scheduler</strong>
+          <small>Decision support</small>
+        </span>
+      </a>
+
+      <nav class="nav-list">
+        <a href="{% url 'scheduler:dashboard' %}" {% if section == 'dashboard' %}aria-current="page"{% endif %}>
+          <span class="nav-list__icon" aria-hidden="true">⌂</span> Overview
+        </a>
+        <a href="{% url 'scheduler:terms' %}" {% if section == 'terms' %}aria-current="page"{% endif %}>
+          <span class="nav-list__icon" aria-hidden="true">◇</span> Academic terms
+        </a>
+        <a href="{% url 'scheduler:runs' %}" {% if section == 'runs' %}aria-current="page"{% endif %}>
+          <span class="nav-list__icon" aria-hidden="true">▶</span> Schedule runs
+        </a>
+        <a href="{% url 'scheduler:schedules' %}" {% if section == 'schedules' %}aria-current="page"{% endif %}>
+          <span class="nav-list__icon" aria-hidden="true">▦</span> Timetables
+        </a>
+        <a href="{% url 'scheduler:imports' %}" {% if section == 'imports' %}aria-current="page"{% endif %}>
+          <span class="nav-list__icon" aria-hidden="true">⇧</span> Data import
+        </a>
+        <a href="{% url 'scheduler:reviews' %}" {% if section == 'reviews' %}aria-current="page"{% endif %}>
+          <span class="nav-list__icon" aria-hidden="true">✓</span> Reviews
+        </a>
+      </nav>
+
+      <div class="sidebar__footer">
+        <p class="eyebrow">Research prototype</p>
+        <p>CP-SAT and Genetic Algorithm scheduling for USM.</p>
+      </div>
+    </aside>
+
+    <div class="page-shell">
+      <header class="topbar">
+        <button class="icon-button menu-button" type="button" aria-controls="site-navigation" aria-expanded="false">
+          <span aria-hidden="true">☰</span><span class="visually-hidden">Open navigation</span>
+        </button>
+        <div class="topbar__context">
+          <span class="eyebrow">University of Southern Mindanao</span>
+          <span class="topbar__title">University Scheduling Office</span>
+        </div>
+        <details class="user-menu">
+          <summary>
+            <span class="avatar" aria-hidden="true">{{ request.user.get_short_name|default:request.user.username|slice:':1'|upper }}</span>
+            <span class="user-menu__name">{{ request.user.get_short_name|default:request.user.username }}</span>
+          </summary>
+          <div class="user-menu__panel">
+            <p><strong>{{ request.user.get_full_name|default:request.user.username }}</strong></p>
+            <p class="muted">{{ request.user.email|default:'Authorized user' }}</p>
+            {% if request.user.is_staff %}<a href="{% url 'admin:index' %}">Django administration</a>{% endif %}
+            <form method="post" action="{% url 'logout' %}">
+              {% csrf_token %}
+              <button class="text-button" type="submit">Sign out</button>
+            </form>
+          </div>
+        </details>
+      </header>
+
+      {% if messages %}
+        <div class="messages" aria-live="polite" aria-label="System messages">
+          {% for message in messages %}
+            <div class="message message--{{ message.tags|default:'info' }}">
+              <span>{{ message }}</span>
+              <button type="button" class="message__dismiss" aria-label="Dismiss message">×</button>
+            </div>
+          {% endfor %}
+        </div>
+      {% endif %}
+
+      <main id="main-content" class="main-content" tabindex="-1">
+        {% block content %}{% endblock %}
+      </main>
+
+      <footer class="site-footer">
+        <span>USM Scheduler · BS Computer Science thesis prototype</span>
+        <span>Final approval remains with authorized scheduling personnel.</span>
+      </footer>
+    </div>
+  </div>
+  <div class="nav-scrim" data-nav-scrim hidden></div>
+  {% block extra_body %}{% endblock %}
+</body>
+</html>

@@ -1,0 +1,70 @@
+{% load static %}
+<!doctype html>
+<html lang="en" class="no-js">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#123c2d">
+  <title>Sign in · USM Scheduler</title>
+  <link rel="stylesheet" href="{% static 'scheduler/css/app.css' %}">
+</head>
+<body class="auth-page">
+  <a class="skip-link" href="#login-form">Skip to sign in</a>
+  <main class="auth-layout">
+    <section class="auth-intro" aria-labelledby="welcome-title">
+      <div class="brand brand--light">
+        <span class="brand__mark" aria-hidden="true">USM</span>
+        <span><strong>Scheduler</strong><small>Decision support</small></span>
+      </div>
+      <div>
+        <p class="eyebrow">University of Southern Mindanao</p>
+        <h1 id="welcome-title">Build valid timetables with evidence, not guesswork.</h1>
+        <p>Prepare semester data, compare CP-SAT and Genetic Algorithm runs, validate every hard rule, and keep people in control of final approval.</p>
+      </div>
+      <ul class="auth-points" aria-label="System capabilities">
+        <li><span aria-hidden="true">✓</span> College-boundary-aware room assignment</li>
+        <li><span aria-hidden="true">✓</span> Independent conflict validation</li>
+        <li><span aria-hidden="true">✓</span> Reproducible algorithm comparison</li>
+      </ul>
+    </section>
+
+    <section class="auth-card" aria-labelledby="sign-in-title">
+      <div>
+        <p class="eyebrow">Authorized access</p>
+        <h2 id="sign-in-title">Sign in to continue</h2>
+        <p class="muted">Use the account issued by the scheduling administrator.</p>
+      </div>
+
+      {% if form.non_field_errors %}
+        <div class="message message--error" role="alert">
+          {% for error in form.non_field_errors %}<span>{{ error }}</span>{% endfor %}
+        </div>
+      {% endif %}
+
+      <form id="login-form" method="post" class="form-stack" novalidate>
+        {% csrf_token %}
+        {% if next %}<input type="hidden" name="next" value="{{ next }}">{% endif %}
+        <div class="field">
+          <label for="id_username">Username</label>
+          <input id="id_username" name="username" type="text" autocomplete="username" required autofocus
+                 value="{{ form.username.value|default:'' }}" aria-describedby="username-help{% if form.username.errors %} username-error{% endif %}">
+          <small id="username-help">Your institutional scheduler account.</small>
+          {% if form.username.errors %}<span id="username-error" class="field-error">{{ form.username.errors|join:', ' }}</span>{% endif %}
+        </div>
+        <div class="field">
+          <label for="id_password">Password</label>
+          <div class="password-field">
+            <input id="id_password" name="password" type="password" autocomplete="current-password" required
+                   aria-describedby="{% if form.password.errors %}password-error{% endif %}">
+            <button type="button" class="password-toggle" data-password-toggle aria-controls="id_password" aria-pressed="false">Show</button>
+          </div>
+          {% if form.password.errors %}<span id="password-error" class="field-error">{{ form.password.errors|join:', ' }}</span>{% endif %}
+        </div>
+        <button class="button button--primary button--large" type="submit">Sign in</button>
+      </form>
+      <p class="auth-help">Account access is managed by the USM scheduling administrator. Do not share credentials or institutional datasets.</p>
+    </section>
+  </main>
+  <script src="{% static 'scheduler/js/app.js' %}" defer></script>
+</body>
+</html>

@@ -1,0 +1,47 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+.hypothesis/
+.venv/
+venv/
+
+# Django runtime
+db.sqlite3
+staticfiles/
+media/
+uploads/
+*.log
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Institutional/research data must never be committed
+data/
+datasets/
+research-data/
+*.xlsx
+*.xls
+*.ods
+*.dump
+*.sql
+backups/
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Experiment outputs are generated artifacts
+experiment-results/

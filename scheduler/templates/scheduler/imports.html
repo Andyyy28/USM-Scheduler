@@ -1,0 +1,30 @@
+{% extends 'scheduler/base.html' %}
+
+{% block content %}
+<header class="page-header"><div><p class="eyebrow">Data intake</p><h1>Semester data import</h1><p>Stage institutional records, correct validation errors, and commit an immutable term revision.</p></div></header>
+
+{% if is_central %}<div class="content-grid content-grid--import">
+  <section class="panel form-panel" aria-labelledby="upload-title">
+    <div class="panel__header"><div><p class="eyebrow">Staging area</p><h2 id="upload-title">Upload a workbook</h2></div><a href="{% url 'api:import-template' %}">Download template</a></div>
+    <form class="form-stack" action="{% url 'api:import-preview' %}" method="post" enctype="multipart/form-data" data-api-form>
+      {% csrf_token %}
+      <div class="field"><label for="import-term">Academic term</label><select id="import-term" name="term_id" required><option value="">Select the target term</option>{% for term in terms %}<option value="{{ term.id }}">{{ term.academic_year }} · {{ term.semester }} · {{ term.campus }}</option>{% endfor %}</select><small>Imports never modify a historical frozen revision.</small></div>
+      <div class="field"><label for="import-file">Semester workbook</label><label class="file-drop" for="import-file" data-file-drop><span class="file-drop__icon" aria-hidden="true">⇧</span><strong>Choose an Excel workbook</strong><span data-file-name>or drag and drop it here</span><small>Use the documented template and remove student-identifying data.</small></label><input class="visually-hidden" id="import-file" name="file" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" required></div>
+      <label class="check-field"><input type="checkbox" name="confirm_authorized" value="true" required><span>I confirm this dataset is authorized for the study and contains no unnecessary personal data.</span></label>
+      <p class="form-status" data-form-status aria-live="polite"></p>
+      <button class="button button--primary" type="submit" {% if not terms %}disabled aria-disabled="true"{% endif %}>Validate import</button>
+    </form>
+  </section>
+
+  <aside class="panel" aria-labelledby="import-checks-title">
+    <div class="panel__header"><div><p class="eyebrow">Before commit</p><h2 id="import-checks-title">Validation gates</h2></div></div>
+    <ul class="check-list"><li>Required identifiers and valid references</li><li>Meeting duration and recurrence structure</li><li>Instructor and room availability coverage</li><li>Room types, capabilities, and unit authorization</li><li>Locked assignments with no direct conflicts</li><li>Duplicate records and unsupported values</li></ul>
+    <div class="inline-note"><strong>Safe failure:</strong> invalid rows stay in staging. They never become solver input until an authorized administrator commits the revision.</div>
+  </aside>
+</div>{% else %}<section class="callout callout--info"><div><strong>Read-only access</strong><p>Only a central scheduler or system administrator can stage and commit semester workbooks.</p></div></section>{% endif %}
+
+<section class="panel" aria-labelledby="import-history-title">
+  <div class="panel__header"><div><p class="eyebrow">Audit trail</p><h2 id="import-history-title">Recent import batches</h2></div></div>
+  {% if batches %}<div class="table-wrap"><table><thead><tr><th scope="col">Workbook</th><th scope="col">Term</th><th scope="col">Status</th><th scope="col">Rows / errors</th><th scope="col">Uploaded by</th><th scope="col">Uploaded</th><th scope="col">Action</th></tr></thead><tbody>{% for batch in batches %}<tr><td><strong>{{ batch.filename }}</strong><small class="cell-note">{{ batch.id|truncatechars:16 }}</small></td><td>{{ batch.term }}</td><td><span class="status status--{{ batch.status_class }}">{{ batch.status }}</span></td><td>{{ batch.rows }} rows · {{ batch.error_count }} errors{% if batch.errors %}<details><summary>Diagnostics</summary><ul>{% for error in batch.errors %}<li>{{ error.sheet_name }}:{{ error.row_number|default:'—' }} {{ error.code }} — {{ error.message }}</li>{% endfor %}</ul></details>{% endif %}</td><td>{{ batch.uploaded_by }}</td><td>{{ batch.created_at|date:'M j, Y · H:i'|default:'—' }}</td><td>{% if batch.can_commit and is_central %}<form action="{% url 'api:import-commit' batch.id %}" method="post" data-api-form>{% csrf_token %}<button class="button button--compact button--primary" type="submit" data-confirm="Commit this clean preview as a new immutable term revision?">Commit revision</button></form>{% elif batch.committed_revision_id %}<span class="status status--committed">Revision {{ batch.committed_revision_id }}</span>{% else %}<span class="muted">Correct and re-upload</span>{% endif %}</td></tr>{% endfor %}</tbody></table></div>{% else %}<div class="empty-state"><span class="empty-state__icon" aria-hidden="true">⇧</span><div><h3>No import batches</h3><p>Download and populate the semester workbook template before starting the first validated import.</p></div></div>{% endif %}
+</section>
+{% endblock %}

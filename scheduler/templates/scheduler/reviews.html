@@ -1,0 +1,16 @@
+{% extends 'scheduler/base.html' %}
+
+{% block content %}
+<header class="page-header"><div><p class="eyebrow">Human oversight</p><h1>Schedule review</h1><p>College reviewers verify assignments before an authorized university approver publishes a schedule.</p></div><a class="button button--secondary" href="{% url 'scheduler:schedules' %}">View timetables</a></header>
+
+<section class="callout callout--info"><div><strong>Approval is not automatic.</strong><p>A solver status of feasible or optimal means the encoded constraints passed. Reviewers still confirm institutional correctness, data completeness, and policy exceptions.</p></div></section>
+
+<section class="panel" aria-labelledby="review-queue-title">
+  <div class="panel__header panel__header--tools"><div><p class="eyebrow">College sign-off</p><h2 id="review-queue-title">Review queue</h2></div><div class="field field--search"><label class="visually-hidden" for="review-search">Search reviews</label><input id="review-search" type="search" placeholder="Search college or reviewer" data-table-search="review-table"></div></div>
+  {% if reviews %}
+    <div class="table-wrap"><table id="review-table"><thead><tr><th scope="col">Schedule</th><th scope="col">College / unit</th><th scope="col">Reviewer</th><th scope="col">Status</th><th scope="col">Comment</th><th scope="col">Updated</th><th scope="col">Decision</th></tr></thead><tbody>
+      {% for review in reviews %}<tr><td>{% if review.schedule_id %}<a class="table-link" href="{% url 'scheduler:schedules' %}?schedule={{ review.schedule_id|urlencode }}">{{ review.schedule }}</a>{% else %}{{ review.schedule }}{% endif %}</td><td><strong>{{ review.college }}</strong></td><td>{{ review.reviewer }}</td><td><span class="status status--{{ review.status_class }}">{{ review.status }}</span></td><td>{{ review.comment|default:'—'|truncatechars:64 }}</td><td>{{ review.updated_at|date:'M j, Y · H:i'|default:'—' }}</td><td>{% if review.actionable and review.schedule_id and review.college_id %}<details class="decision-menu"><summary>Record decision</summary><form action="{% url 'api:schedule-review' review.schedule_id %}" method="post" data-api-form>{% csrf_token %}<input type="hidden" name="college_id" value="{{ review.college_id }}"><div class="field"><label for="review-status-{{ review.id }}">Decision</label><select id="review-status-{{ review.id }}" name="status" required><option value="ENDORSED">Endorse</option><option value="CHANGES_REQUESTED">Request changes</option></select></div><div class="field"><label for="review-comment-{{ review.id }}">Comment</label><textarea id="review-comment-{{ review.id }}" name="comment" rows="3" required></textarea></div><p class="form-status" data-form-status aria-live="polite"></p><button class="button button--compact button--primary" type="submit">Save decision</button></form></details>{% else %}<span class="muted">Recorded</span>{% endif %}</td></tr>{% endfor %}
+    </tbody></table></div><p class="table-empty" data-table-empty hidden>No reviews match that search.</p>
+  {% else %}<div class="empty-state empty-state--prominent"><span class="empty-state__icon" aria-hidden="true">✓</span><div><h3>No schedules awaiting review</h3><p>Promote an independently validated candidate timetable to begin the review workflow.</p></div></div>{% endif %}
+</section>
+{% endblock %}

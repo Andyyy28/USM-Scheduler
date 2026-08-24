@@ -1,0 +1,28 @@
+{% extends 'scheduler/base.html' %}
+
+{% block content %}
+<header class="page-header">
+  <div><p class="eyebrow">Optimization result</p><h1>Run details</h1><p>Trace the dataset, configuration, feasibility, timing, and stopping condition for this result.</p></div>
+  <div class="page-actions"><a class="button button--secondary" href="{% url 'scheduler:runs' %}">Back to runs</a>{% if run %}<a class="button button--primary" href="{% url 'scheduler:run-comparison' %}?left={{ run.id|urlencode }}">Compare this run</a>{% if run.can_cancel and is_central %}<form action="{% url 'api:run-cancel' run.id %}" method="post" data-api-form data-success-url="{% url 'scheduler:run-detail' run.id %}">{% csrf_token %}<button class="button button--secondary" type="submit" data-confirm="Cancel this queued or running solver job?">Cancel run</button></form>{% endif %}{% endif %}</div>
+</header>
+
+{% if run %}
+  <section class="run-hero">
+    <div><span class="status status--{{ run.status_class }}">{{ run.status }}</span><p class="eyebrow">{{ run.algorithm }}</p><h2>{{ run.term }}</h2><p>Run identifier <code>{{ run.id }}</code></p></div>
+    <dl class="hero-facts"><div><dt>Started</dt><dd>{{ run.started_at|date:'M j, Y · H:i:s'|default:'—' }}</dd></div><div><dt>Finished</dt><dd>{{ run.finished_at|date:'M j, Y · H:i:s'|default:'—' }}</dd></div></dl>
+  </section>
+  <section class="metric-grid" aria-label="Run metrics">
+    <article class="metric-card"><span>Execution time</span><strong>{{ run.runtime }}</strong><small>Total measured solver runtime</small></article>
+    <article class="metric-card"><span>First feasible</span><strong>{{ run.first_feasible }}</strong><small>Time until all hard rules passed</small></article>
+    <article class="metric-card"><span>Hard violations</span><strong>{{ run.hard_violations }}</strong><small>Must be zero for feasibility</small></article>
+    <article class="metric-card"><span>Objective</span><strong>{{ run.objective }}</strong><small>Normalized quality/penalty result</small></article>
+  </section>
+  <div class="content-grid">
+    <section class="panel"><div class="panel__header"><div><p class="eyebrow">Reproducibility</p><h2>Recorded configuration</h2></div></div><dl class="definition-list"><div><dt>Dataset snapshot</dt><dd>{{ run.snapshot }}</dd></div><div><dt>Random seed</dt><dd>{{ run.seed }}</dd></div><div><dt>Problem hash</dt><dd><code>{{ run.problem_hash|default:'Not recorded' }}</code></dd></div><div><dt>Configuration hash</dt><dd><code>{{ run.config_hash|default:'Not recorded' }}</code></dd></div></dl></section>
+    <section class="panel"><div class="panel__header"><div><p class="eyebrow">Termination</p><h2>Solver outcome</h2></div></div><dl class="definition-list"><div><dt>Status</dt><dd><span class="status status--{{ run.status_class }}">{{ run.status }}</span></dd></div><div><dt>Stopping reason</dt><dd>{{ run.stopping_reason }}</dd></div><div><dt>Retries</dt><dd>{{ run.retry_count }}</dd></div><div><dt>Room-slot utilization</dt><dd>{{ run.room_utilization }}</dd></div></dl></section>
+  </div>
+  {% if run.status_class == 'infeasible' or run.status_class == 'no-solution' or run.status_class == 'error' %}<section class="callout callout--warning"><div><strong>No invalid timetable was promoted.</strong><p>Inspect import errors, locks, availability, and room authorization diagnostics. “Infeasible” describes the current frozen requirements; it is not permission to relax a hard constraint silently.</p></div></section>{% endif %}
+{% else %}
+  <section class="empty-state empty-state--prominent"><span class="empty-state__icon" aria-hidden="true">?</span><div><h2>Run not available</h2><p>No schedule run with identifier <code>{{ run_id }}</code> is available in the current database.</p></div><a class="button button--primary" href="{% url 'scheduler:runs' %}">View run history</a></section>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,63 @@
+{% extends 'scheduler/base.html' %}
+
+{% block content %}
+<header class="page-header">
+  <div><p class="eyebrow">Semester configuration</p><h1>Academic terms</h1><p>Keep each semester’s active sections, availability, and schedule versions isolated and reproducible.</p></div>
+  {% if request.user.is_staff %}<a class="button button--primary" href="{% url 'admin:index' %}">Manage term data</a>{% endif %}
+</header>
+
+<section class="panel" aria-labelledby="terms-title">
+  <div class="panel__header panel__header--tools">
+    <div><p class="eyebrow">Term registry</p><h2 id="terms-title">Configured semesters</h2></div>
+    <div class="field field--search"><label class="visually-hidden" for="term-search">Search terms</label><input id="term-search" type="search" placeholder="Search year, semester, or campus" data-table-search="terms-table"></div>
+  </div>
+  {% if terms %}
+    <div class="table-wrap">
+      <table id="terms-table">
+        <thead><tr><th scope="col">Academic year</th><th scope="col">Semester</th><th scope="col">Campus</th><th scope="col">Period</th><th scope="col">Status</th></tr></thead>
+        <tbody>
+        {% for term in terms %}
+          <tr>
+            <td><strong>{{ term.academic_year }}</strong></td>
+            <td>{{ term.semester }}</td>
+            <td>{{ term.campus }}</td>
+            <td>{{ term.starts_at|date:'M j, Y'|default:'—' }} – {{ term.ends_at|date:'M j, Y'|default:'—' }}</td>
+            <td><span class="status status--{{ term.status_class }}">{{ term.status }}</span></td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <p class="table-empty" data-table-empty hidden>No terms match that search.</p>
+  {% else %}
+    <div class="empty-state empty-state--prominent"><span class="empty-state__icon" aria-hidden="true">◇</span><div><h3>No academic terms configured</h3><p>Create a term and freeze a validated dataset revision before running either solver.</p></div></div>
+  {% endif %}
+</section>
+
+{% if is_central %}<section class="panel form-panel" aria-labelledby="clone-term-title">
+  <div class="panel__header"><div><p class="eyebrow">Semester adaptability</p><h2 id="clone-term-title">Clone a semester planning base</h2></div><span class="tag">Editable draft</span></div>
+  <form class="form-grid" action="" method="post" data-clone-term-form data-api-form data-success-url="{% url 'scheduler:terms' %}">
+    {% csrf_token %}
+    <div class="field"><label for="clone-source">Source committed revision</label><select id="clone-source" required data-clone-source><option value="">Select a source</option>{% for revision in clone_sources %}<option value="{% url 'api:term-clone' revision.id %}">{{ revision }}</option>{% endfor %}</select></div>
+    <div class="field"><label for="clone-year">New academic year</label><input id="clone-year" name="academic_year" placeholder="2027-2028" pattern="[0-9]{4}-[0-9]{4}" required></div>
+    <div class="field"><label for="clone-semester">Semester</label><select id="clone-semester" name="semester" required><option value="FIRST">First semester</option><option value="SECOND">Second semester</option><option value="MIDYEAR">Midyear</option></select></div>
+    <div class="field"><label for="clone-start">Starts on</label><input id="clone-start" name="starts_on" type="date" required></div><div class="field"><label for="clone-end">Ends on</label><input id="clone-end" name="ends_on" type="date" required></div>
+    <div class="field"><label for="clone-label">Planning label</label><input id="clone-label" name="label" placeholder="Next semester planning base"></div>
+    <div class="form-actions form-actions--full"><p class="form-status" data-form-status aria-live="polite"></p><button class="button button--primary" type="submit" {% if not clone_sources %}disabled aria-disabled="true"{% endif %}>Clone term inputs</button></div>
+  </form>
+</section>{% endif %}
+
+{% if is_central and draft_revisions %}<section class="panel form-panel" aria-labelledby="finalize-revision-title">
+  <div class="panel__header"><div><p class="eyebrow">Preflight gate</p><h2 id="finalize-revision-title">Validate and freeze an edited clone</h2></div><span class="tag">Atomic commit</span></div>
+  <form class="form-grid" action="" method="post" data-finalize-revision-form data-api-form data-success-url="{% url 'scheduler:terms' %}">
+    {% csrf_token %}
+    <div class="field"><label for="finalize-revision">Draft revision</label><select id="finalize-revision" required data-finalize-source><option value="">Select a draft</option>{% for revision in draft_revisions %}<option value="{% url 'api:revision-finalize' revision.id %}">{{ revision }}</option>{% endfor %}</select></div>
+    <div class="field"><label for="finalize-objective">Approved objective profile</label><select id="finalize-objective" name="objective_profile_id" required><option value="">Select a term-matching or global profile</option>{% for profile in approved_objectives %}<option value="{{ profile.id }}">{{ profile }}</option>{% endfor %}</select><small>A cloned profile must be reviewed and approved in administration before finalization.</small></div>
+    <div class="form-actions form-actions--full"><p class="form-status" data-form-status aria-live="polite"></p><button class="button button--primary" type="submit" {% if not approved_objectives %}disabled aria-disabled="true"{% endif %} data-confirm="Run full preflight and make this revision immutable?">Validate and commit revision</button></div>
+  </form>
+</section>{% endif %}
+
+<section class="callout callout--info">
+  <div><strong>Term isolation protects the experiment.</strong><p>New freshmen, continuing sections, graduating cohorts, room availability, and faculty availability belong to a specific term revision. Historical runs remain linked to the frozen revision they used.</p></div>
+</section>
+{% endblock %}

@@ -1,0 +1,36 @@
+{% extends 'scheduler/base.html' %}
+
+{% block content %}
+<header class="page-header"><div><p class="eyebrow">Controlled evaluation</p><h1>Compare algorithm runs</h1><p>Use runs from the same frozen problem instance and inspect feasibility before runtime or quality.</p></div><a class="button button--secondary" href="{% url 'scheduler:runs' %}">Run history</a></header>
+
+<section class="panel form-panel" aria-labelledby="comparison-picker-title">
+  <div class="panel__header"><div><p class="eyebrow">Pair selection</p><h2 id="comparison-picker-title">Choose two recorded runs</h2></div></div>
+  <form class="comparison-picker" method="get" data-comparison-form>
+    <div class="field"><label for="left-run">First run</label><select id="left-run" name="left" required>{% for option in run_options %}<option value="{{ option.id }}" {% if option.id == left_id %}selected{% endif %}>{{ option.algorithm }} · {{ option.term }} · {{ option.status }} · {{ option.id|truncatechars:12 }}</option>{% endfor %}</select></div>
+    <span class="comparison-picker__versus" aria-hidden="true">vs</span>
+    <div class="field"><label for="right-run">Second run</label><select id="right-run" name="right" required>{% for option in run_options %}<option value="{{ option.id }}" {% if option.id == right_id %}selected{% endif %}>{{ option.algorithm }} · {{ option.term }} · {{ option.status }} · {{ option.id|truncatechars:12 }}</option>{% endfor %}</select></div>
+    <button class="button button--primary" type="submit">Compare</button>
+  </form>
+  <p class="form-status" data-comparison-status aria-live="polite"></p>
+</section>
+
+{% if left and right %}
+  {% if comparable %}<section class="callout callout--success"><div><strong>Comparable problem instance</strong><p>The runs reference the same dataset snapshot or problem hash. Confirm their stopping budgets and quality weights also match.</p></div></section>{% else %}<section class="callout callout--warning"><div><strong>Dataset match could not be confirmed.</strong><p>Do not use this pair for a fairness claim unless the frozen snapshot, constraints, objective weights, and stopping budget are identical.</p></div></section>{% endif %}
+  <section class="panel" aria-labelledby="comparison-table-title">
+    <div class="panel__header"><div><p class="eyebrow">Feasibility-first readout</p><h2 id="comparison-table-title">Side-by-side metrics</h2></div></div>
+    <div class="table-wrap"><table class="comparison-table"><thead><tr><th scope="col">Metric</th><th scope="col">{{ left.algorithm }}<small class="cell-note">{{ left.id|truncatechars:16 }}</small></th><th scope="col">{{ right.algorithm }}<small class="cell-note">{{ right.id|truncatechars:16 }}</small></th></tr></thead><tbody>
+      <tr><th scope="row">Status</th><td><span class="status status--{{ left.status_class }}">{{ left.status }}</span></td><td><span class="status status--{{ right.status_class }}">{{ right.status }}</span></td></tr>
+      <tr><th scope="row">Hard violations</th><td>{{ left.hard_violations }}</td><td>{{ right.hard_violations }}</td></tr>
+      <tr><th scope="row">Execution time</th><td>{{ left.runtime }}</td><td>{{ right.runtime }}</td></tr>
+      <tr><th scope="row">Time to first feasible</th><td>{{ left.first_feasible }}</td><td>{{ right.first_feasible }}</td></tr>
+      <tr><th scope="row">Objective / quality</th><td>{{ left.objective }}</td><td>{{ right.objective }}</td></tr>
+      <tr><th scope="row">Room-slot utilization</th><td>{{ left.room_utilization }}</td><td>{{ right.room_utilization }}</td></tr>
+      <tr><th scope="row">Retries</th><td>{{ left.retry_count }}</td><td>{{ right.retry_count }}</td></tr>
+      <tr><th scope="row">Seed</th><td>{{ left.seed }}</td><td>{{ right.seed }}</td></tr>
+      <tr><th scope="row">Stopping reason</th><td>{{ left.stopping_reason }}</td><td>{{ right.stopping_reason }}</td></tr>
+    </tbody></table></div>
+  </section>
+{% else %}
+  <section class="empty-state empty-state--prominent"><span class="empty-state__icon" aria-hidden="true">⇄</span><div><h2>Two runs are required</h2><p>Complete at least one CP-SAT and one Genetic Algorithm run on the same dataset snapshot.</p></div></section>
+{% endif %}
+{% endblock %}
