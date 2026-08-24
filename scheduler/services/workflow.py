@@ -45,11 +45,11 @@ def validate_schedule_version(
     *,
     actor: models.User | None = None,
 ) -> models.ValidationResult:
-    schedule = (
-        models.ScheduleVersion.objects.select_for_update()
-        .select_related("snapshot")
-        .get(pk=schedule.pk)
-    )
+    # Snapshot is nullable for imported/manual drafts. Joining it here would
+    # make PostgreSQL apply ``FOR UPDATE`` to the nullable side of an outer
+    # join, which PostgreSQL does not support. Lock the schedule row first and
+    # load its snapshot lazily inside this transaction.
+    schedule = models.ScheduleVersion.objects.select_for_update().get(pk=schedule.pk)
     if not schedule.snapshot_id:
         raise ValidationError("A schedule requires a canonical problem snapshot for independent validation.")
     problem = load_problem(schedule.snapshot)

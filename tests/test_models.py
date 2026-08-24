@@ -38,7 +38,7 @@ def build_academic_graph(suffix: str = "") -> dict[str, object]:
         authoritative_department=department,
     )
     term = models.AcademicTerm.objects.create(
-        academic_year=f"2026-2027{suffix}",
+        academic_year="2026-2027",
         semester=models.Semester.FIRST,
         campus=f"Kabacan{suffix}",
         starts_on=date(2026, 8, 1),

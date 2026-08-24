@@ -1075,7 +1075,11 @@ def commit_import(batch: models.ImportBatch, user: models.User) -> models.TermDa
     """Atomically materialize one clean preview as a committed dataset revision."""
 
     _assert_commit_permission(user)
-    locked = models.ImportBatch.objects.select_for_update().select_related("term", "committed_revision").get(pk=batch.pk)
+    # Do not join the nullable committed_revision relation while taking the
+    # row lock. PostgreSQL rejects ``FOR UPDATE`` when it is applied to the
+    # nullable side of an outer join. The foreign-key id below is sufficient
+    # for the idempotency check, so only the non-null term relation is loaded.
+    locked = models.ImportBatch.objects.select_for_update().select_related("term").get(pk=batch.pk)
     if locked.status == models.ImportStatus.COMMITTED or locked.committed_revision_id:
         raise ImportCommitError("This import batch has already been committed.")
     if locked.status != models.ImportStatus.PREVIEWED or locked.error_count or locked.errors.exists():
