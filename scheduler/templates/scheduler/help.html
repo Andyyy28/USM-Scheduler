@@ -1,0 +1,93 @@
+{% extends 'scheduler/base.html' %}
+
+{% block content %}
+<header class="page-header">
+  <div>
+    <p class="eyebrow">Operational guide</p>
+    <h1>Help and user guide</h1>
+    <p>Follow the controlled workflow below to prepare, generate, validate, review, and publish a semester timetable.</p>
+  </div>
+  <div class="page-actions">
+    <button class="button button--secondary" type="button" data-print-page>Print this guide</button>
+    {% if is_central %}<a class="button button--primary" href="{% url 'scheduler:imports' %}">Start with data import</a>{% endif %}
+  </div>
+</header>
+
+<section class="inline-note" role="note" aria-label="Prototype notice">
+  <strong>Before using institutional data:</strong> obtain written authorization, remove unnecessary personal data, and confirm the semester's room-authority and approval rules with the responsible USM offices. This prototype does not replace official approval.
+</section>
+
+{% if is_central %}
+<section class="panel" id="import" aria-labelledby="try-title">
+  <div class="panel__header">
+    <div><p class="eyebrow">Safe first run</p><h2 id="try-title">Try the complete workflow with synthetic data</h2></div>
+  </div>
+  <div class="resource-grid">
+    <article class="resource-card">
+      <h3>1. Download test data</h3>
+      <p>A fictional Kabacan-campus workbook exercises lectures, laboratories, a shared offering, team teaching, availability, room authorization, and a locked meeting.</p>
+      <a class="table-link" href="{% url 'api:trial-workbook' %}">Download synthetic workbook</a>
+    </article>
+    <article class="resource-card">
+      <h3>2. Preview before commit</h3>
+      <p>Open Data import, select a test term, acknowledge that the file is synthetic, and preview it. The system reports sheet, row, cell, and reason for every issue.</p>
+      <a class="table-link" href="{% url 'scheduler:imports' %}">Open Data import</a>
+    </article>
+    <article class="resource-card">
+      <h3>3. Generate both schedules</h3>
+      <p>Commit the clean preview, preflight the revision, and launch a CP-SAT/GA comparison from the same frozen problem snapshot.</p>
+      <a class="table-link" href="{% url 'scheduler:runs' %}">Open Generate schedule</a>
+    </article>
+  </div>
+</section>
+{% endif %}
+
+<div class="content-grid content-grid--wide">
+  <section class="panel" aria-labelledby="workflow-guide-title">
+    <div class="panel__header"><div><p class="eyebrow">Core procedure</p><h2 id="workflow-guide-title">Seven controlled steps</h2></div></div>
+    <ol class="plain-list">
+      <li class="guide-step"><span class="guide-step__number">1</span><div><h3>Prepare an academic term</h3><p>Confirm academic year, semester, Kabacan campus, teaching days, atom length, and semester dates. Use a new dataset revision for every material change.</p></div></li>
+      <li class="guide-step"><span class="guide-step__number">2</span><div><h3>Prepare the workbook</h3><p>Enter catalog records, active sections, fixed instructors, room capabilities and authorizations, time atoms, availability, offerings, and meeting requirements. Do not add room capacity or identifiable student data to this v1 study.</p></div></li>
+      <li class="guide-step"><span class="guide-step__number">3</span><div><h3>Preview and commit</h3><p>Preview validates references and rules without changing the semester dataset. Correct every error, preview again, then commit the entire clean batch atomically.</p></div></li>
+      <li class="guide-step"><span class="guide-step__number">4</span><div><h3>Preflight and freeze input</h3><p>Select an approved objective profile. Preflight removes illegal room-time candidates and rejects missing availability, unusable locks, or meetings with no legal placement. Store the immutable snapshot and its hash.</p></div></li>
+      <li class="guide-step" id="generate"><span class="guide-step__number">5</span><div><h3>Generate and compare</h3><p>Run CP-SAT and the Genetic Algorithm with the same snapshot, objective, hardware allocation, and time limit. Feasibility comes first; compare quality only among independently validated schedules.</p></div></li>
+      <li class="guide-step" id="timetables"><span class="guide-step__number">6</span><div><h3>Review and revise</h3><p>College reviewers inspect their unit, comment, and endorse. The central scheduler resolves concerns, locks confirmed meetings when needed, and creates a child version for regeneration.</p></div></li>
+      <li class="guide-step"><span class="guide-step__number">7</span><div><h3>Approve and export</h3><p>Only a zero-hard-violation version can proceed. Central approval makes the version immutable; export the approved schedule and its reproducibility manifest for authorized distribution.</p></div></li>
+    </ol>
+  </section>
+
+  <aside class="panel" aria-labelledby="role-guide-title">
+    <div class="panel__header"><div><p class="eyebrow">Responsibilities</p><h2 id="role-guide-title">Who does what</h2></div></div>
+    <div class="guide-grid">
+      <article class="guide-card"><h3>System administrator</h3><p>Controls accounts, role assignments, configuration, backups, and platform maintenance. This role does not certify academic correctness.</p></article>
+      <article class="guide-card"><h3>Central scheduler</h3><p>Owns term preparation, imports, snapshots, optimization runs, final conflict checks, approvals, locks, and authorized exports.</p></article>
+      <article class="guide-card"><h3>College reviewer</h3><p>Views the complete timetable for context and comments or endorses only the assigned college scope.</p></article>
+    </div>
+
+    <div class="panel__header"><div><p class="eyebrow">Interpretation</p><h2>Solver outcomes</h2></div></div>
+    <dl class="definition-list">
+      <div><dt>Optimal</dt><dd>CP-SAT found a feasible schedule and proved no better objective exists for that model.</dd></div>
+      <div><dt>Feasible</dt><dd>A zero-hard-violation schedule was found; optimality was not proved.</dd></div>
+      <div><dt>Infeasible</dt><dd>Use only when CP-SAT proves the model has no solution. GA cannot make this claim.</dd></div>
+      <div><dt>No solution found</dt><dd>The time-limited search ended without a validated feasible result; this does not prove impossibility.</dd></div>
+      <div><dt>Invalid input</dt><dd>Preflight found a data or policy problem that must be corrected before a fair algorithm run.</dd></div>
+    </dl>
+  </aside>
+</div>
+
+<section class="panel" aria-labelledby="resources-title">
+  <div class="panel__header"><div><p class="eyebrow">Reference material</p><h2 id="resources-title">Downloads and troubleshooting</h2></div></div>
+  <div class="resource-grid">
+    {% if is_central %}
+    <article class="resource-card"><h3>Blank import template</h3><p>Use the current versioned column structure for a real authorized semester.</p><a class="table-link" href="{% url 'api:import-template' %}">Download blank workbook</a></article>
+    {% endif %}
+    <article class="resource-card"><h3>Preview reports errors</h3><p>Use the reported sheet, row, cell, and code. Resolve missing references first, then availability, authorization, capabilities, and locks.</p></article>
+    <article class="resource-card"><h3>A meeting has no candidate</h3><p>Check its duration, break boundaries, fixed instructors, room capability, campus, availability, and every attached section's authorization rule.</p></article>
+    <article class="resource-card"><h3>A solver times out</h3><p>Keep the result as a recorded timeout. Do not call it infeasible, silently retry it, or alter only one algorithm's budget.</p></article>
+  </div>
+</section>
+
+<section class="inline-note" role="note">
+  <strong>Need the full handbook?</strong> The repository includes a printable, step-by-step guide with data-sheet definitions, test instructions, approval procedures, recovery guidance, and a glossary in <code>docs/user-guide.md</code>.
+</section>
+{% endblock %}

@@ -45,3 +45,7 @@ Thumbs.db
 
 # Experiment outputs are generated artifacts
 experiment-results/
+
+# One explicitly named, wholly synthetic workbook is a safe guided example.
+!examples/
+!examples/USM-Scheduler-Synthetic-Trial-v1.xlsx

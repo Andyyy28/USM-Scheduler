@@ -3,15 +3,36 @@
 {% block content %}
 <header class="page-header">
   <div>
-    <p class="eyebrow">Scheduling workspace</p>
-    <h1>Good day, {{ request.user.get_short_name|default:request.user.username }}.</h1>
-    <p>Monitor semester readiness, optimization runs, validation, and approvals from one place.</p>
+    <p class="eyebrow">Scheduling overview</p>
+    <h1>Welcome, {{ request.user.get_short_name|default:request.user.username }}.</h1>
+    {% if is_central %}
+      <p>Prepare semester data, generate candidate timetables, and move validated schedules through review and approval.</p>
+    {% else %}
+      <p>Inspect university timetables and complete the schedule reviews assigned to your academic unit.</p>
+    {% endif %}
   </div>
   <div class="page-actions">
-    <a class="button button--secondary" href="{% url 'scheduler:imports' %}">Import data</a>
-    <a class="button button--primary" href="{% url 'scheduler:runs' %}#new-run">Generate schedule</a>
+    {% if is_central %}
+      <a class="button button--secondary" href="{% url 'scheduler:imports' %}">Prepare semester data</a>
+      <a class="button button--primary" href="{% url 'scheduler:runs' %}#new-run">Generate a schedule</a>
+    {% else %}
+      <a class="button button--secondary" href="{% url 'scheduler:schedules' %}">View timetables</a>
+      <a class="button button--primary" href="{% url 'scheduler:reviews' %}">Open review queue</a>
+    {% endif %}
   </div>
 </header>
+
+<section class="callout callout--info" aria-label="Role guidance">
+  <div>
+    {% if is_central %}
+      <strong>Central scheduling workspace</strong>
+      <p>Begin with a validated semester workbook. Candidate schedules remain drafts until independent validation, college review, and authorized approval are complete.</p>
+    {% else %}
+      <strong>College review workspace</strong>
+      <p>Check subjects, instructors, rooms, and unit policies before endorsing. An algorithm result never replaces academic review.</p>
+    {% endif %}
+  </div>
+</section>
 
 {% if active_term %}
   <section class="term-banner" aria-labelledby="active-term-title">
@@ -47,6 +68,7 @@
     {% if recent_runs %}
       <div class="table-wrap">
         <table>
+          <caption class="visually-hidden">Recent schedule optimization runs</caption>
           <thead><tr><th scope="col">Algorithm</th><th scope="col">Status</th><th scope="col">Runtime</th><th scope="col">Created</th><th scope="col"><span class="visually-hidden">Open</span></th></tr></thead>
           <tbody>
           {% for run in recent_runs %}
@@ -62,21 +84,22 @@
         </table>
       </div>
     {% else %}
-      <div class="empty-state"><span class="empty-state__icon" aria-hidden="true">▶</span><div><h3>No runs yet</h3><p>Import a validated term dataset, then launch CP-SAT and GA with a recorded configuration.</p></div></div>
+      <div class="empty-state"><span class="empty-state__icon" aria-hidden="true">▶</span><div><h3>No schedule runs yet</h3><p>{% if is_central %}Prepare a validated semester dataset, then generate the first candidate timetable.{% else %}The central scheduling team has not published any recorded runs yet.{% endif %}</p></div></div>
     {% endif %}
   </section>
 
   <aside class="panel" aria-labelledby="workflow-title">
     <div class="panel__header"><div><p class="eyebrow">Controlled workflow</p><h2 id="workflow-title">From data to approval</h2></div></div>
     <ol class="workflow-list">
-      <li><span>1</span><div><strong>Prepare</strong><p>Import and validate semester records.</p></div></li>
-      <li><span>2</span><div><strong>Optimize</strong><p>Run both algorithms on one frozen snapshot.</p></div></li>
-      <li><span>3</span><div><strong>Compare</strong><p>Check feasibility first, then quality, time, and consistency.</p></div></li>
-      <li><span>4</span><div><strong>Review</strong><p>Lock approved meetings and publish a version.</p></div></li>
+      <li><span>1</span><div><strong>Prepare</strong><p>Import and validate authorized semester records.</p></div></li>
+      <li><span>2</span><div><strong>Generate</strong><p>Create candidate schedules from one frozen dataset.</p></div></li>
+      <li><span>3</span><div><strong>Verify</strong><p>Confirm zero hard-rule violations and inspect quality.</p></div></li>
+      <li><span>4</span><div><strong>Review and approve</strong><p>Collect college endorsements before final publication.</p></div></li>
     </ol>
     {% if latest_import %}
       <div class="inline-note"><strong>Latest import:</strong> {{ latest_import.filename }} <span class="status status--{{ latest_import.status_class }}">{{ latest_import.status }}</span></div>
     {% endif %}
+    <div class="inline-note"><a href="{% url 'scheduler:help' %}">Open the step-by-step user guide</a></div>
   </aside>
 </div>
 {% endblock %}

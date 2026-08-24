@@ -34,10 +34,11 @@ def _canonicalize_xlsx(content: bytes) -> bytes:
             payload = source.read(name)
             if name == "docProps/core.xml":
                 payload = re.sub(
-                    rb"<dcterms:modified[^>]*>.*?</dcterms:modified>",
-                    (
-                        b'<dcterms:modified xsi:type="dcterms:W3CDTF">'
-                        b"2000-01-01T00:00:00Z</dcterms:modified>"
+                    rb"(<dcterms:modified[^>]*>).*?(</dcterms:modified>)",
+                    lambda match: (
+                        match.group(1)
+                        + b"2000-01-01T00:00:00Z"
+                        + match.group(2)
                     ),
                     payload,
                 )

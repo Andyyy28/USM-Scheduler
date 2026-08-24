@@ -1,5 +1,14 @@
 # USM Scheduler
 
+<p align="center">
+  <img src="scheduler/static/scheduler/img/usm-seal.png" width="132" alt="University of Southern Mindanao seal">
+</p>
+
+> **BSCS thesis prototype — not an official USM scheduling system.** The seal is
+> shown for the proposed academic prototype and does not imply university
+> endorsement. Institutional data, policy approval, deployment, and logo use
+> require authorization from the responsible USM offices.
+
 University-wide timetabling decision support for the University of Southern Mindanao (USM), developed for the BS Computer Science thesis:
 
 > **A Comparative Evaluation of CP-SAT and Genetic Algorithm for University Timetabling and College-Boundary-Aware Room Assignment at the University of Southern Mindanao**
@@ -49,6 +58,32 @@ flowchart LR
 - **Deployment:** Gunicorn and WhiteNoise in an unprivileged container; separate web and solver worker processes.
 
 See [Architecture](docs/architecture.md) for component boundaries and data flows.
+
+## Try the complete synthetic workflow
+
+After the local-development setup below, create safe demo accounts and a small
+starter term:
+
+```powershell
+python manage.py seed_demo `
+  --admin-password "AdminPassword123!" `
+  --central-password "SchedulerPassword123!" `
+  --reviewer-password "ReviewerPassword123!"
+python manage.py runserver
+```
+
+Open <http://127.0.0.1:8000/accounts/login/> and sign in as
+`demo-scheduler` / `SchedulerPassword123!`. From **Data import**, download the
+full synthetic trial workbook, preview it against the demonstration term, commit
+the clean revision, then use **Generate schedule** to run CP-SAT and GA. The
+tracked copy is [USM-Scheduler-Synthetic-Trial-v1.xlsx](examples/USM-Scheduler-Synthetic-Trial-v1.xlsx).
+
+The richer workbook contains 14 meetings, five sections, 11 offerings, two
+laboratories, restricted availability, a shared offering, team teaching,
+explicit cross-unit room grants, a distinct-day pair, and one lock. It contains
+no student rows and all names/codes are visibly synthetic. Automated tests prove
+that the same workbook imports, preflights, and yields independently feasible
+results from both engines.
 
 ## Quick start with Docker Compose
 
@@ -162,6 +197,10 @@ python manage.py seed_demo
 # Write only the public XLSX schema/template (never institutional data).
 python manage.py create_import_template .\usm-semester-template.xlsx
 
+# Rebuild the tracked, wholly synthetic guided-test workbook.
+python manage.py create_trial_workbook `
+  --output .\examples\USM-Scheduler-Synthetic-Trial-v1.xlsx
+
 # Clone a committed semester into an editable draft.
 python manage.py clone_term 1 --academic-year 2027-2028 --semester FIRST `
   --starts-on 2027-08-01 --ends-on 2027-12-20 --actor central-scheduler
@@ -172,7 +211,7 @@ python manage.py create_scaling_snapshots 1
 # Preview the 60-run comparison; execution requires --mode direct or --mode queue.
 python manage.py run_comparison_experiment 1
 
-# Preview the fixed 24-configuration Ã— 10-seed synthetic GA pilot grid.
+# Preview the fixed 24-configuration × 10-seed synthetic GA pilot grid.
 python manage.py ga_tuning_grid 1
 ```
 
@@ -191,7 +230,9 @@ scheduler/
   api/          authenticated HTTP interfaces
   templates/    accessible scheduling workspace
   static/       project-owned CSS and JavaScript
-docs/           architecture, schema, experiment, roadmap, and defense notes
+docs/           concept paper, guidebook, architecture, experiment, and defense notes
+examples/       one explicitly identified synthetic XLSX trial dataset
+scripts/        reproducible concept-paper and Word-document builders
 docker/         container entrypoint
 usm_scheduler/  Django, Celery, ASGI, and WSGI configuration
 tests/          model, service, statistical, and solver verification
@@ -199,6 +240,12 @@ tests/          model, service, statistical, and solver verification
 
 ## Project documentation
 
+- [Printable Word user guide](docs/USM-Scheduler-User-Guide.docx)
+- [Markdown user guide](docs/user-guide.md)
+- [Printable Word concept paper](docs/USM-Scheduler-Concept-Paper.docx)
+- [Self-contained HTML concept paper](docs/USM-Scheduler-Concept-Paper.html)
+- [Markdown concept paper](docs/concept-paper.md)
+- [USM Kabacan research and prioritized gap assessment](docs/usm-kabacan-research-and-gap-assessment.md)
 - [Complete system development plan](docs/system-plan.md)
 - [System architecture](docs/architecture.md)
 - [Data dictionary](docs/data-dictionary.md)

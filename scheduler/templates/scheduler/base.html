@@ -5,8 +5,10 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light">
-  <meta name="theme-color" content="#123c2d">
-  <title>{% if page_title %}{{ page_title }} · {% endif %}USM Scheduler</title>
+  <meta name="theme-color" content="#073a2a">
+  <meta name="description" content="USM Kabacan university scheduling decision-support thesis prototype">
+  <title>{% if page_title %}{{ page_title }} · {% endif %}USM Scheduling System</title>
+  <link rel="icon" type="image/png" href="{% static 'scheduler/img/usm-seal.png' %}">
   <link rel="stylesheet" href="{% static 'scheduler/css/app.css' %}">
   <script>document.documentElement.classList.replace('no-js', 'js');</script>
   <script src="{% static 'scheduler/js/app.js' %}" defer></script>
@@ -16,49 +18,52 @@
   <a class="skip-link" href="#main-content">Skip to main content</a>
   <div class="app-shell">
     <aside class="sidebar" id="site-navigation" aria-label="Primary navigation">
-      <a class="brand" href="{% url 'scheduler:dashboard' %}" aria-label="USM Scheduler home">
-        <span class="brand__mark" aria-hidden="true">USM</span>
+      <a class="brand" href="{% url 'scheduler:dashboard' %}" aria-label="USM Scheduling System home">
+        <span class="brand__seal-frame" aria-hidden="true"><img class="brand__seal" src="{% static 'scheduler/img/usm-seal.png' %}" alt=""></span>
         <span>
-          <strong>Scheduler</strong>
-          <small>Decision support</small>
+          <strong>USM Scheduler</strong>
+          <small>Kabacan Main Campus</small>
         </span>
       </a>
 
       <nav class="nav-list">
         <a href="{% url 'scheduler:dashboard' %}" {% if section == 'dashboard' %}aria-current="page"{% endif %}>
-          <span class="nav-list__icon" aria-hidden="true">⌂</span> Overview
+          <svg class="nav-list__icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M3 10.8 12 3l9 7.8v9.7a.5.5 0 0 1-.5.5H15v-6H9v6H3.5a.5.5 0 0 1-.5-.5z"/></svg> Overview
         </a>
         <a href="{% url 'scheduler:terms' %}" {% if section == 'terms' %}aria-current="page"{% endif %}>
-          <span class="nav-list__icon" aria-hidden="true">◇</span> Academic terms
+          <svg class="nav-list__icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M6 2v3M18 2v3M3.5 8h17M5 4h14a2 2 0 0 1 2 2v14H3V6a2 2 0 0 1 2-2Zm2 8h3v3H7zm7 0h3v3h-3z"/></svg> Academic terms
         </a>
         <a href="{% url 'scheduler:runs' %}" {% if section == 'runs' %}aria-current="page"{% endif %}>
-          <span class="nav-list__icon" aria-hidden="true">▶</span> Schedule runs
+          <svg class="nav-list__icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M7 4.5v15l12-7.5z"/></svg> Generate schedule
         </a>
         <a href="{% url 'scheduler:schedules' %}" {% if section == 'schedules' %}aria-current="page"{% endif %}>
-          <span class="nav-list__icon" aria-hidden="true">▦</span> Timetables
+          <svg class="nav-list__icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M3 4h18v16H3zm0 5h18M8 4v16m8-16v16"/></svg> Timetables
         </a>
-        <a href="{% url 'scheduler:imports' %}" {% if section == 'imports' %}aria-current="page"{% endif %}>
-          <span class="nav-list__icon" aria-hidden="true">⇧</span> Data import
-        </a>
+        {% if is_central %}<a href="{% url 'scheduler:imports' %}" {% if section == 'imports' %}aria-current="page"{% endif %}>
+          <svg class="nav-list__icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M12 16V3m0 0L7 8m5-5 5 5M4 14v6h16v-6"/></svg> Data import
+        </a>{% endif %}
         <a href="{% url 'scheduler:reviews' %}" {% if section == 'reviews' %}aria-current="page"{% endif %}>
-          <span class="nav-list__icon" aria-hidden="true">✓</span> Reviews
+          <svg class="nav-list__icon" aria-hidden="true" viewBox="0 0 24 24"><path d="m4 12 5 5L20 6"/></svg> Review &amp; approval
+        </a>
+        <a href="{% url 'scheduler:help' %}" {% if section == 'help' %}aria-current="page"{% endif %}>
+          <svg class="nav-list__icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M9.3 9a3 3 0 1 1 4.8 2.4c-1.5 1.1-2.1 1.7-2.1 3.1M12 19h.01M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20Z"/></svg> Help &amp; user guide
         </a>
       </nav>
 
       <div class="sidebar__footer">
-        <p class="eyebrow">Research prototype</p>
-        <p>CP-SAT and Genetic Algorithm scheduling for USM.</p>
+        <p class="eyebrow">Decision support system</p>
+        <p>CP-SAT and Genetic Algorithm scheduling with independent validation.</p>
       </div>
     </aside>
 
     <div class="page-shell">
       <header class="topbar">
         <button class="icon-button menu-button" type="button" aria-controls="site-navigation" aria-expanded="false">
-          <span aria-hidden="true">☰</span><span class="visually-hidden">Open navigation</span>
+          <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/></svg><span class="visually-hidden">Open navigation</span>
         </button>
         <div class="topbar__context">
-          <span class="eyebrow">University of Southern Mindanao</span>
-          <span class="topbar__title">University Scheduling Office</span>
+          <span class="eyebrow">University of Southern Mindanao · Kabacan</span>
+          <span class="topbar__title">Scheduling Decision Support</span>
         </div>
         <details class="user-menu">
           <summary>
@@ -67,7 +72,8 @@
           </summary>
           <div class="user-menu__panel">
             <p><strong>{{ request.user.get_full_name|default:request.user.username }}</strong></p>
-            <p class="muted">{{ request.user.email|default:'Authorized user' }}</p>
+            <p class="muted">{{ request.user.get_role_display|default:'Authorized user' }}</p>
+            {% if request.user.email %}<p class="muted">{{ request.user.email }}</p>{% endif %}
             {% if request.user.is_staff %}<a href="{% url 'admin:index' %}">Django administration</a>{% endif %}
             <form method="post" action="{% url 'logout' %}">
               {% csrf_token %}
@@ -76,6 +82,11 @@
           </div>
         </details>
       </header>
+
+      <div class="prototype-notice" role="note">
+        <strong>BSCS thesis prototype</strong>
+        <span>Not an official USM scheduling system. Use only authorized, de-identified data.</span>
+      </div>
 
       {% if messages %}
         <div class="messages" aria-live="polite" aria-label="System messages">
@@ -93,8 +104,8 @@
       </main>
 
       <footer class="site-footer">
-        <span>USM Scheduler · BS Computer Science thesis prototype</span>
-        <span>Final approval remains with authorized scheduling personnel.</span>
+        <span>USM Scheduling Decision Support System · Kabacan Main Campus case study</span>
+        <span>Human review and authorized approval remain mandatory.</span>
       </footer>
     </div>
   </div>

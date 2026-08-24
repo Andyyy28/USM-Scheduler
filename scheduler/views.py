@@ -606,7 +606,31 @@ def schedules(request: HttpRequest) -> HttpResponse:
         _assignment_view(item)
         for item in _safe_list("ScheduleAssignment", limit=2000, filters={"schedule_id": selected_id})
     ]
-    assignments.sort(key=lambda row: (str(row.day), str(row.starts_at), str(row.room)))
+    day_labels = (
+        "Monday",
+        "Tuesday",
+        "Wednesday",
+        "Thursday",
+        "Friday",
+        "Saturday",
+        "Sunday",
+    )
+    day_order = {label: index for index, label in enumerate(day_labels)}
+    assignments.sort(
+        key=lambda row: (
+            day_order.get(str(row.day), len(day_order)),
+            str(row.starts_at),
+            str(row.room),
+        )
+    )
+    timetable_days = [
+        SimpleNamespace(
+            label=label,
+            day_index=index,
+            assignments=[row for row in assignments if str(row.day) == label],
+        )
+        for index, label in enumerate(day_labels)
+    ]
     return _render(
         request,
         "scheduler/schedules.html",
@@ -616,6 +640,7 @@ def schedules(request: HttpRequest) -> HttpResponse:
         selected_schedule=selected,
         selected_id=selected_id,
         assignments=assignments,
+        timetable_days=timetable_days,
     )
 
 
@@ -697,4 +722,17 @@ def reviews(request: HttpRequest) -> HttpResponse:
         section="reviews",
         title="Schedule review",
         reviews=rows,
+    )
+
+
+@login_required
+@require_GET
+def help_guide(request: HttpRequest) -> HttpResponse:
+    """Render the role-aware, print-friendly operating guide."""
+
+    return _render(
+        request,
+        "scheduler/help.html",
+        section="help",
+        title="Help and user guide",
     )

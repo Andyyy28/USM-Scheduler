@@ -248,6 +248,7 @@ def test_authenticated_operator_pages_render_current_contracts() -> None:
         "scheduler:schedules",
         "scheduler:imports",
         "scheduler:reviews",
+        "scheduler:help",
         "scheduler:run-comparison",
     ):
         response = client.get(reverse(route))
@@ -256,8 +257,11 @@ def test_authenticated_operator_pages_render_current_contracts() -> None:
     terms_html = client.get(reverse("scheduler:terms")).content.decode()
     assert "Clone a semester planning base" in terms_html
     runs_html = client.get(reverse("scheduler:runs")).content.decode()
-    assert "Preflight and freeze a problem snapshot" in runs_html
-    assert "controlled 30-seed comparison" in runs_html
+    assert "Check and freeze the scheduling data" in runs_html
+    assert "controlled 30-seed algorithm comparison" in runs_html
+    help_html = client.get(reverse("scheduler:help")).content.decode()
+    assert reverse("api:trial-workbook") in help_html
+    assert "Seven controlled steps" in help_html
 
 
 def test_running_solver_cancellation_terminates_the_dedicated_worker_task(monkeypatch) -> None:

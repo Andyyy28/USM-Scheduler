@@ -159,6 +159,26 @@ class ImportTemplateView(APIView):
         return response
 
 
+class TrialWorkbookView(APIView):
+    permission_classes = [IsCentralScheduler]
+
+    def get(self, request):
+        from scheduler.services.trial_data import (
+            TRIAL_WORKBOOK_FILENAME,
+            build_trial_workbook_bytes,
+        )
+
+        response = HttpResponse(
+            build_trial_workbook_bytes(),
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+        response["Content-Disposition"] = (
+            f'attachment; filename="{TRIAL_WORKBOOK_FILENAME}"'
+        )
+        response["X-Content-Type-Options"] = "nosniff"
+        return response
+
+
 class ImportPreviewView(APIView):
     permission_classes = [IsCentralScheduler]
     parser_classes = [MultiPartParser, FormParser]

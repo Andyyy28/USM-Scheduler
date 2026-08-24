@@ -1432,7 +1432,7 @@ def build_import_template() -> bytes:
     schema_sheet["B2"] = "0=Monday ... 6=Sunday"
     schema_sheet.sheet_state = "hidden"
 
-    header_fill = PatternFill(fill_type="solid", fgColor="1F4E78")
+    header_fill = PatternFill(fill_type="solid", fgColor="073A2A")
     header_font = Font(color="FFFFFF", bold=True)
     for name, schema in SHEET_SCHEMAS.items():
         sheet = workbook.create_sheet(name)

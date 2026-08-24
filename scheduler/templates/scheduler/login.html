@@ -4,8 +4,10 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#123c2d">
-  <title>Sign in · USM Scheduler</title>
+  <meta name="theme-color" content="#073a2a">
+  <meta name="description" content="Sign in to the USM Kabacan scheduling decision-support thesis prototype">
+  <title>Sign in · USM Scheduling System</title>
+  <link rel="icon" type="image/png" href="{% static 'scheduler/img/usm-seal.png' %}">
   <link rel="stylesheet" href="{% static 'scheduler/css/app.css' %}">
 </head>
 <body class="auth-page">
@@ -13,25 +15,26 @@
   <main class="auth-layout">
     <section class="auth-intro" aria-labelledby="welcome-title">
       <div class="brand brand--light">
-        <span class="brand__mark" aria-hidden="true">USM</span>
-        <span><strong>Scheduler</strong><small>Decision support</small></span>
+        <span class="brand__seal-frame"><img class="brand__seal brand__seal--login" src="{% static 'scheduler/img/usm-seal.png' %}" alt="University of Southern Mindanao seal"></span>
+        <span><strong>USM Scheduler</strong><small>Kabacan Main Campus</small></span>
       </div>
       <div>
-        <p class="eyebrow">University of Southern Mindanao</p>
-        <h1 id="welcome-title">Build valid timetables with evidence, not guesswork.</h1>
-        <p>Prepare semester data, compare CP-SAT and Genetic Algorithm runs, validate every hard rule, and keep people in control of final approval.</p>
+        <p class="eyebrow">University of Southern Mindanao · Kabacan</p>
+        <h1 id="welcome-title">University scheduling, made verifiable.</h1>
+        <p>Prepare semester data, generate conflict-checked timetables, compare CP-SAT and Genetic Algorithm results, and retain human control of every approval.</p>
       </div>
       <ul class="auth-points" aria-label="System capabilities">
-        <li><span aria-hidden="true">✓</span> College-boundary-aware room assignment</li>
-        <li><span aria-hidden="true">✓</span> Independent conflict validation</li>
-        <li><span aria-hidden="true">✓</span> Reproducible algorithm comparison</li>
+        <li><span aria-hidden="true">●</span> College-aware rooms</li>
+        <li><span aria-hidden="true">●</span> Independent validation</li>
+        <li><span aria-hidden="true">●</span> Reproducible comparison</li>
       </ul>
     </section>
 
     <section class="auth-card" aria-labelledby="sign-in-title">
       <div>
-        <p class="eyebrow">Authorized access</p>
-        <h2 id="sign-in-title">Sign in to continue</h2>
+        <span class="status status--warning">Thesis prototype</span>
+        <p class="eyebrow auth-card__eyebrow">Authorized access</p>
+        <h2 id="sign-in-title">Sign in to your workspace</h2>
         <p class="muted">Use the account issued by the scheduling administrator.</p>
       </div>
 
@@ -46,7 +49,7 @@
         {% if next %}<input type="hidden" name="next" value="{{ next }}">{% endif %}
         <div class="field">
           <label for="id_username">Username</label>
-          <input id="id_username" name="username" type="text" autocomplete="username" required autofocus
+          <input id="id_username" name="username" type="text" autocomplete="username" required
                  value="{{ form.username.value|default:'' }}" aria-describedby="username-help{% if form.username.errors %} username-error{% endif %}">
           <small id="username-help">Your institutional scheduler account.</small>
           {% if form.username.errors %}<span id="username-error" class="field-error">{{ form.username.errors|join:', ' }}</span>{% endif %}
@@ -62,7 +65,7 @@
         </div>
         <button class="button button--primary button--large" type="submit">Sign in</button>
       </form>
-      <p class="auth-help">Account access is managed by the USM scheduling administrator. Do not share credentials or institutional datasets.</p>
+      <div class="auth-help"><strong>Data responsibility</strong><p>Account access is managed by the scheduling administrator. Do not share credentials or upload institutional data without authorization and required privacy review.</p></div>
     </section>
   </main>
   <script src="{% static 'scheduler/js/app.js' %}" defer></script>

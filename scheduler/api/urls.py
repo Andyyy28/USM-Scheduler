@@ -12,6 +12,7 @@ urlpatterns = [
     path("revisions/<int:revision_id>/finalize/", views.RevisionFinalizeView.as_view(), name="revision-finalize"),
     path("objective-profiles/", views.ObjectiveProfileListView.as_view(), name="objective-profiles"),
     path("imports/template/", views.ImportTemplateView.as_view(), name="import-template"),
+    path("imports/synthetic-trial/", views.TrialWorkbookView.as_view(), name="trial-workbook"),
     path("imports/preview/", views.ImportPreviewView.as_view(), name="import-preview"),
     path("imports/<int:batch_id>/commit/", views.ImportCommitView.as_view(), name="import-commit"),
     path("snapshots/", views.SnapshotListCreateView.as_view(), name="snapshots"),

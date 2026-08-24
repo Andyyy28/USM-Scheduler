@@ -61,7 +61,7 @@ If official authorization covers more than one semester, repeat the full protoco
 
 Use synthetic fixtures or one designated pilot subset that will not be part of final inference. Give CP-SAT and GA the same total tuning wall-clock budget. Pilot goals are implementation checking and selection of one GA configuration; do not tune objective weights to make an algorithm win.
 
-The executable pilot grid contains 24 configurations: population `100/200/400`, tournament size `3/5`, crossover `0.80/0.90`, and mutation `1/N` or `2/N`, each run with synthetic-only seeds `2001â€“2010`. The selection order is highest feasibility rate, lowest median feasible raw penalty, then lowest median execution time; a configuration-ID hash breaks an exact tie. `python manage.py ga_tuning_grid <synthetic_snapshot_id>` emits the complete 240-run plan and hash without executing it. Only explicit `--mode direct` or `--mode queue` launches the pilot.
+The executable pilot grid contains 24 configurations: population `100/200/400`, tournament size `3/5`, crossover `0.80/0.90`, and mutation `1/N` or `2/N`, each run with synthetic-only seeds `2001–2010`. The selection order is highest feasibility rate, lowest median feasible raw penalty, then lowest median execution time; a configuration-ID hash breaks an exact tie. `python manage.py ga_tuning_grid <synthetic_snapshot_id>` emits the complete 240-run plan and hash without executing it. Only explicit `--mode direct` or `--mode queue` launches the pilot.
 
 Before final runs, freeze:
 
