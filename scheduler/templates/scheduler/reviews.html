@@ -11,7 +11,7 @@
   <span>Check subjects and sections</span><span>Check instructors</span><span>Check rooms and times</span><span>Explain requested changes</span>
 </section>
 
-<section class="panel" aria-labelledby="review-queue-title">
+<section class="panel review-panel" aria-labelledby="review-queue-title">
   <div class="panel__header"><div><p class="eyebrow">Waiting for action</p><h2 id="review-queue-title">Review queue</h2><p class="muted">Only schedules and colleges within your assigned role are shown.</p></div></div>
   {% if reviews %}
     <div class="review-list">
@@ -34,7 +34,7 @@
       {% endfor %}
     </div>
   {% else %}
-    <div class="empty-state empty-state--prominent"><span class="empty-state__icon" aria-hidden="true">✓</span><div><h3>No schedules are waiting for review</h3><p>New items will appear here after the central scheduler sends a timetable to colleges.</p></div></div>
+    <div class="empty-state empty-state--review"><span class="empty-state__icon" aria-hidden="true">✓</span><div><h3>No schedules are waiting for review</h3><p>New items will appear here after the central scheduler sends a timetable to colleges.</p></div></div>
   {% endif %}
 </section>
 {% endblock %}

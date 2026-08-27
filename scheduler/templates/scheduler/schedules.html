@@ -4,16 +4,21 @@
 <header class="page-header"><div><p class="eyebrow">Timetables</p><h1>Check the class schedule</h1><p>Choose a version, review the weekly timetable, and take the next available action.</p></div><div class="page-actions"><a class="button button--secondary" href="{% url 'scheduler:help' %}#check">How to check a timetable</a><a class="button button--secondary" href="{% url 'scheduler:reviews' %}">Open reviews</a></div></header>
 
 {% if schedules %}
-  <section class="panel schedule-selector" aria-labelledby="schedule-selector-title">
-    <div><p class="eyebrow">Schedule versions</p><h2 id="schedule-selector-title">Choose a timetable</h2></div>
-    <form method="get"><div class="field"><label class="visually-hidden" for="schedule-select">Schedule version</label><select id="schedule-select" name="schedule" data-auto-submit>{% for schedule in schedules %}<option value="{{ schedule.id }}" {% if schedule.id == selected_id %}selected{% endif %}>{{ schedule.term }} · Version {{ schedule.version }} · {{ schedule.status }}</option>{% endfor %}</select></div><button class="button button--secondary no-js-only" type="submit">Open</button></form>
+  <section class="panel schedule-overview" aria-labelledby="schedule-selector-title">
+    <div class="schedule-selector">
+      <div><p class="eyebrow">Schedule versions</p><h2 id="schedule-selector-title">Choose a timetable</h2></div>
+      <form method="get"><div class="field"><label class="visually-hidden" for="schedule-select">Schedule version</label><select id="schedule-select" name="schedule" data-auto-submit>{% for schedule in schedules %}<option value="{{ schedule.id }}" {% if schedule.id == selected_id %}selected{% endif %}>{{ schedule.term }} · Version {{ schedule.version }} · {{ schedule.status }}</option>{% endfor %}</select></div><button class="button button--secondary no-js-only" type="submit">Open</button></form>
+    </div>
+
+    {% if selected_schedule %}
+      <div class="schedule-summary">
+        <div><span class="status status--{{ selected_schedule.status_class }}">{{ selected_schedule.status }}</span><p class="eyebrow">{{ selected_schedule.term }}</p><h2>Schedule version {{ selected_schedule.version }}</h2><p>{{ selected_schedule.algorithm }} · {{ selected_schedule.source }} · {{ selected_schedule.assignment_count }} assignments</p></div>
+        <dl><div><dt>Created</dt><dd>{{ selected_schedule.created_at|date:'M j, Y · H:i'|default:'—' }}</dd></div><div><dt>Approval</dt><dd>{% if selected_schedule.approved %}Approved{% else %}Not final{% endif %}</dd></div></dl>
+      </div>
+    {% endif %}
   </section>
 
   {% if selected_schedule %}
-    <section class="schedule-summary">
-      <div><span class="status status--{{ selected_schedule.status_class }}">{{ selected_schedule.status }}</span><p class="eyebrow">{{ selected_schedule.term }}</p><h2>Schedule version {{ selected_schedule.version }}</h2><p>{{ selected_schedule.algorithm }} · {{ selected_schedule.source }} · {{ selected_schedule.assignment_count }} assignments</p></div>
-      <dl><div><dt>Created</dt><dd>{{ selected_schedule.created_at|date:'M j, Y · H:i'|default:'—' }}</dd></div><div><dt>Approval</dt><dd>{% if selected_schedule.approved %}Approved{% else %}Not final{% endif %}</dd></div></dl>
-    </section>
 
     <section class="panel schedule-actions" aria-labelledby="schedule-next-action">
       <div><p class="eyebrow">Next action</p>

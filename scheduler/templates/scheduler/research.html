@@ -11,12 +11,12 @@
 {% if is_central %}
 <section class="panel form-panel" id="new-experiment" aria-labelledby="new-experiment-title">
   <div class="panel__header"><div><p class="eyebrow">Controlled study</p><h2 id="new-experiment-title">Create the 30-seed algorithm comparison</h2><p class="muted">This creates 60 measured runs—one CP-SAT and one Genetic Algorithm run for each seed.</p></div><span class="tag">Advanced</span></div>
-  <form class="form-grid" action="{% url 'api:experiments' %}" method="post" data-api-form data-success-url="{% url 'scheduler:research' %}">
+  <form class="form-grid research-form" action="{% url 'api:experiments' %}" method="post" data-api-form data-success-url="{% url 'scheduler:research' %}">
     {% csrf_token %}
     <div class="field"><label for="experiment-snapshot">Checked dataset</label><select id="experiment-snapshot" name="snapshot_id" required><option value="">Choose checked data</option>{% for snapshot in snapshots %}<option value="{{ snapshot.id }}">{{ snapshot.term }} · {{ snapshot.short_hash }}</option>{% endfor %}</select></div>
     <div class="field"><label for="experiment-name">Experiment name</label><input id="experiment-name" name="name" type="text" placeholder="Full-term CP-SAT vs GA"></div>
-    <div class="field field--full"><label for="experiment-seeds">Fixed random seeds</label><textarea id="experiment-seeds" name="seeds" rows="3" required>1001,1002,1003,1004,1005,1006,1007,1008,1009,1010,1011,1012,1013,1014,1015,1016,1017,1018,1019,1020,1021,1022,1023,1024,1025,1026,1027,1028,1029,1030</textarea></div>
     <div class="field"><label for="experiment-time">Time budget per run</label><input id="experiment-time" name="time_limit_seconds" type="number" min="1" value="300" required><small>Seconds for each measured trial.</small></div>
+    <div class="field field--full research-form__seeds"><label for="experiment-seeds">Fixed random seeds</label><textarea id="experiment-seeds" name="seeds" rows="3" required>1001,1002,1003,1004,1005,1006,1007,1008,1009,1010,1011,1012,1013,1014,1015,1016,1017,1018,1019,1020,1021,1022,1023,1024,1025,1026,1027,1028,1029,1030</textarea><small>Thirty repeatable run numbers, shared by both scheduling methods.</small></div>
     <input type="hidden" name="order_seed" value="20260824">
     <div class="form-actions form-actions--full"><p class="form-status" data-form-status aria-live="polite"></p><button class="button button--primary" type="submit" {% if not snapshots %}disabled aria-disabled="true"{% endif %}>Create research batch</button></div>
   </form>
