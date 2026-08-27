@@ -7,7 +7,9 @@ from datetime import date, time
 
 import pytest
 from django.core.management import call_command
+from django.urls import reverse
 from django.utils import timezone
+from rest_framework.test import APIClient
 
 from scheduler import models
 from scheduler.services import experiments
@@ -263,6 +265,219 @@ def test_queue_submission_preserves_frozen_order(monkeypatch) -> None:
     assert queued_summary["algorithms"][models.SolverAlgorithm.CP_SAT]["success_rate"] is None
 
 
+def test_benchmark_contract_handles_unavailable_partial_complete_and_invalid_states() -> None:
+    graph = _experiment_graph("benchmark-states")
+    batch = experiments.create_experiment_batch(
+        graph["snapshot"], graph["user"], seeds=(1, 2), time_limit=7
+    )
+    runs = experiments.ordered_experiment_runs(batch)
+    cp_runs = [run for run in runs if run.algorithm == models.SolverAlgorithm.CP_SAT]
+    ga_runs = [run for run in runs if run.algorithm == models.SolverAlgorithm.GENETIC_ALGORITHM]
+
+    unavailable = experiments.summarize_experiment(batch)["benchmark"]
+    assert unavailable["schema_version"] == "1.0"
+    assert unavailable["state"] == "unavailable"
+    assert unavailable["comparable"] is False
+    assert unavailable["algorithm_ids"] == ["CP_SAT", "GA"]
+
+    models.ScheduleRun.objects.filter(pk=cp_runs[0].pk).update(
+        status=models.RunStatus.FEASIBLE,
+        objective_value=0,
+        execution_seconds=1.0,
+        first_feasible_seconds=0.5,
+    )
+    one_sided = experiments.summarize_experiment(batch)["benchmark"]
+    assert one_sided["state"] == "preliminary"
+    assert one_sided["comparable"] is False
+    assert one_sided["comparability_reasons"][0]["code"] == "ONE_SIDED_EVIDENCE"
+    assert one_sided["by_algorithm"]["CP_SAT"]["median_feasible_raw_penalty"][
+        "value"
+    ] == 0.0
+
+    models.ScheduleRun.objects.filter(pk=ga_runs[0].pk).update(
+        status=models.RunStatus.NO_SOLUTION,
+        execution_seconds=2.0,
+    )
+    partial = experiments.summarize_experiment(batch)["benchmark"]
+    assert partial["state"] == "preliminary"
+    assert partial["comparable"] is True
+    assert partial["by_algorithm"]["GA"]["median_feasible_raw_penalty"][
+        "available"
+    ] is False
+    assert partial["by_algorithm"]["GA"]["rmst_time_to_feasibility_seconds"][
+        "value"
+    ] == 7.0
+
+    models.ScheduleRun.objects.filter(pk__in=[cp_runs[1].pk, ga_runs[1].pk]).update(
+        status=models.RunStatus.NO_SOLUTION,
+        execution_seconds=7.0,
+    )
+    complete = experiments.summarize_experiment(batch)["benchmark"]
+    assert complete["state"] == "complete"
+    assert complete["comparable"] is True
+    assert complete["by_algorithm"]["CP_SAT"]["planned_runs"] == 2
+    assert complete["by_algorithm"]["CP_SAT"]["observed_runs"] == 2
+
+    invalid_graph = _experiment_graph("benchmark-invalid")
+    invalid_batch = experiments.create_experiment_batch(
+        invalid_graph["snapshot"], invalid_graph["user"], seeds=(1,), time_limit=7
+    )
+    corrupt = invalid_batch.runs.order_by("pk").first()
+    corrupt.configuration = {**corrupt.configuration, "time_limit_seconds": 8}
+    corrupt.save(update_fields=["configuration", "updated_at"])
+    models.ScheduleRun.objects.filter(pk=corrupt.pk).update(
+        status=models.RunStatus.FAILED,
+        diagnostics={
+            "metrics": {
+                "service_verification_performed": 1,
+                "service_verification_passed": 0,
+                "reported_config_hash": "0" * 64,
+            }
+        },
+    )
+    invalid = experiments.summarize_experiment(invalid_batch)["benchmark"]
+    assert invalid["state"] == "invalid"
+    assert invalid["comparable"] is False
+    assert {issue["code"] for issue in invalid["protocol_integrity"]["issues"]} >= {
+        "DEADLINE_MISMATCH",
+        "RESULT_VERIFICATION_FAILURE",
+    }
+
+
+def test_run_comparison_counts_only_terminal_runs_and_accepts_experiment_batches() -> None:
+    graph = _experiment_graph("comparison-counts")
+    batch = experiments.create_experiment_batch(
+        graph["snapshot"], graph["user"], seeds=(1, 2), time_limit=5
+    )
+    ga_run = batch.runs.get(algorithm=models.SolverAlgorithm.GENETIC_ALGORITHM, seed=1)
+    models.ScheduleRun.objects.filter(pk=ga_run.pk).update(
+        status=models.RunStatus.FEASIBLE,
+        objective_value=4,
+        execution_seconds=1.5,
+        first_feasible_seconds=0.75,
+    )
+    client = APIClient()
+    client.force_authenticate(graph["user"])
+
+    response = client.get(
+        reverse("api:run-comparison"), {"experiment_batch_id": batch.pk}
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["scope"]["type"] == "controlled_experiment"
+    assert payload["CP_SAT"]["planned_runs"] == 2
+    assert payload["CP_SAT"]["observed_runs"] == 0
+    assert payload["CP_SAT"]["pending_runs"] == 2
+    assert payload["CP_SAT"]["runs"] == 0
+    assert payload["CP_SAT"]["success_rate"] is None
+    assert payload["GA"]["planned_runs"] == 2
+    assert payload["GA"]["observed_runs"] == 1
+    assert payload["GA"]["pending_runs"] == 1
+    assert payload["GA"]["success_rate"] == 1.0
+
+
+@pytest.mark.parametrize(
+    ("left_configuration", "right_configuration", "dimension"),
+    [
+        (
+            {"time_limit_seconds": 5, "worker_count": 1},
+            {"time_limit_seconds": 6, "worker_count": 1},
+            "time_limit_seconds",
+        ),
+        (
+            {"time_limit_seconds": 5, "worker_count": 1},
+            {"time_limit_seconds": 5, "worker_count": 2},
+            "worker_count",
+        ),
+        (
+            {
+                "time_limit_seconds": 5,
+                "worker_count": 1,
+                "population_size": 20,
+                "tournament_size": 2,
+            },
+            {
+                "time_limit_seconds": 5,
+                "worker_count": 1,
+                "population_size": 40,
+                "tournament_size": 2,
+            },
+            "configuration_hashes_by_algorithm",
+        ),
+        (
+            {
+                "time_limit_seconds": 5,
+                "worker_count": 1,
+                "implementation_version": "ga-v1",
+            },
+            {
+                "time_limit_seconds": 5,
+                "worker_count": 1,
+                "implementation_version": "ga-v2",
+            },
+            "implementation_versions_by_algorithm",
+        ),
+    ],
+)
+def test_snapshot_run_comparison_rejects_heterogeneous_evidence(
+    left_configuration: dict[str, object],
+    right_configuration: dict[str, object],
+    dimension: str,
+) -> None:
+    graph = _experiment_graph(f"heterogeneous-{dimension}")
+    for seed, configuration in enumerate(
+        (left_configuration, right_configuration), start=1
+    ):
+        models.ScheduleRun.objects.create(
+            snapshot=graph["snapshot"],
+            algorithm=models.SolverAlgorithm.GENETIC_ALGORITHM,
+            seed=seed,
+            configuration=configuration,
+            requested_by=graph["user"],
+        )
+    client = APIClient()
+    client.force_authenticate(graph["user"])
+
+    response = client.get(
+        reverse("api:run-comparison"), {"snapshot_id": graph["snapshot"].pk}
+    )
+
+    assert response.status_code == 409
+    assert response.json()["code"] == "HETEROGENEOUS_COMPARISON"
+    assert dimension in response.json()["heterogeneous_dimensions"]
+
+
+def test_terminal_solver_version_is_authoritative_and_mismatch_invalidates_evidence() -> None:
+    graph = _experiment_graph("implementation-provenance")
+    batch = experiments.create_experiment_batch(
+        graph["snapshot"],
+        graph["user"],
+        seeds=(1,),
+        time_limit=5,
+        run_configuration={"implementation_version": "ga-v2"},
+    )
+    ga_run = batch.runs.get(algorithm=models.SolverAlgorithm.GENETIC_ALGORITHM)
+    models.ScheduleRun.objects.filter(pk=ga_run.pk).update(
+        status=models.RunStatus.FEASIBLE,
+        execution_seconds=1.0,
+        first_feasible_seconds=0.5,
+        objective_value=0,
+        diagnostics={"metrics": {"implementation_version": "ga-v1"}},
+    )
+    ga_run.refresh_from_db()
+
+    assert experiments.run_implementation_version(ga_run) == "ga-v1"
+    heterogeneous = experiments.snapshot_comparison_heterogeneity([ga_run])
+    assert heterogeneous["implementation_provenance_mismatch_run_ids"] == [ga_run.pk]
+
+    summary = experiments.summarize_experiment(batch)
+    assert summary["benchmark"]["state"] == "invalid"
+    assert "IMPLEMENTATION_PROVENANCE_MISMATCH" in {
+        issue["code"] for issue in summary["benchmark"]["protocol_integrity"]["issues"]
+    }
+
+
 def test_summary_statistics_hamming_retry_cap_room_utilization_and_exports() -> None:
     graph = _experiment_graph("report")
     batch = experiments.create_experiment_batch(
@@ -408,6 +623,16 @@ def test_summary_statistics_hamming_retry_cap_room_utilization_and_exports() -> 
     cp_summary = summary["algorithms"][models.SolverAlgorithm.CP_SAT]
     ga_summary = summary["algorithms"][models.SolverAlgorithm.GENETIC_ALGORITHM]
     assert summary["quality_metric_policy"]["primary"] == "feasible_soft_penalty"
+    assert summary["quality_metric_policy"]["normalizer_review"] == {
+        "status": "placeholder_defaults",
+        "requires_stakeholder_review": True,
+        "all_default_denominators_are_one": True,
+        "default_components": sorted(models.default_objective_normalizers()),
+        "message": (
+            "All objective normalizers use the placeholder denominator 1; interpret "
+            "the normalized quality score as secondary until stakeholder review."
+        ),
+    }
     assert cp_summary["feasible_penalty_per_meeting"]["median"] == 10.0
     assert cp_summary["feasible_normalized_quality_score"]["median"] == 90.0
     assert cp_summary["feasible_objective_components"]["preference_penalty"][
@@ -514,7 +739,12 @@ def test_primary_engine_decision_applies_preregistered_lexicographic_thresholds(
             },
         }
 
-    def tests(feasibility_p: float, quality_p: float, time_p: float = 1.0) -> dict:
+    def tests(
+        feasibility_p: float,
+        quality_p: float,
+        time_p: float = 1.0,
+        time_difference: float = -1.0,
+    ) -> dict:
         return {
             "outcomes": {
                 "feasible_generation": {
@@ -528,6 +758,7 @@ def test_primary_engine_decision_applies_preregistered_lexicographic_thresholds(
                 "censored_time_to_feasibility_seconds": {
                     "available": True,
                     "p_value_holm_adjusted": time_p,
+                    "observed_difference_first_minus_second": time_difference,
                 },
             }
         }
@@ -537,6 +768,14 @@ def test_primary_engine_decision_applies_preregistered_lexicographic_thresholds(
     )
     assert feasibility["winner"] == models.SolverAlgorithm.CP_SAT
     assert feasibility["deciding_tier"] == "feasibility"
+
+    unresolved_feasibility = experiments._primary_engine_decision(
+        summaries(0.90, 0.80, 100, 10, 100, 50), tests(0.40, 0.01)
+    )
+    assert unresolved_feasibility["winner"] is None
+    assert unresolved_feasibility["deciding_tier"] == "feasibility"
+    assert unresolved_feasibility["decision_status"] == "unresolved_feasibility"
+    assert unresolved_feasibility["tiers"]["feasible_schedule_quality"]["applicable"] is False
 
     quality = experiments._primary_engine_decision(
         summaries(0.90, 0.88, 100, 90, 100, 50), tests(0.80, 0.04)
@@ -550,6 +789,15 @@ def test_primary_engine_decision_applies_preregistered_lexicographic_thresholds(
     )
     assert time_decision["winner"] == models.SolverAlgorithm.CP_SAT
     assert time_decision["deciding_tier"] == "time_to_feasibility"
+
+    disagreeing_time = experiments._primary_engine_decision(
+        summaries(0.90, 0.88, 100, 96, 80, 100),
+        tests(0.80, 0.04, time_difference=1.0),
+    )
+    assert disagreeing_time["winner"] is None
+    assert disagreeing_time["tiers"]["time_to_feasibility"][
+        "censored_time_direction_agrees"
+    ] is False
 
     no_winner = experiments._primary_engine_decision(
         summaries(0.90, 0.88, 100, 96, 95, 100), tests(0.80, 0.80)

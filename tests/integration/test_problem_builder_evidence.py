@@ -5,6 +5,8 @@ from io import StringIO
 
 import pytest
 from django.core.management import call_command
+from django.db import connection
+from django.test.utils import CaptureQueriesContext
 
 from scheduler import models
 from scheduler.domain import ProblemInstance
@@ -55,3 +57,20 @@ def test_builder_freezes_complete_schema_1_1_hard_rule_evidence() -> None:
                 set(candidate.occupied_atom_ids) <= set(instructor.available_atom_ids)
                 for candidate in event.candidates
             )
+
+
+def test_builder_uses_bounded_bulk_queries_and_is_deterministic() -> None:
+    output = StringIO()
+    call_command("seed_demo", stdout=output)
+    identifiers = json.loads(output.getvalue().strip().splitlines()[-1])
+    revision = models.TermDatasetRevision.objects.get(pk=identifiers["revision_id"])
+    objective = models.ObjectiveProfile.objects.get(pk=identifiers["objective_profile_id"])
+
+    with CaptureQueriesContext(connection) as captured:
+        first = build_problem(revision, objective).problem
+
+    # The bound is independent of the number of rooms, instructors, meetings,
+    # availability rows, and preferences in the revision.  It guards against
+    # reintroducing related-manager N+1 queries in the canonical builder.
+    assert len(captured) <= 16
+    assert build_problem(revision, objective).problem.canonical_hash == first.canonical_hash

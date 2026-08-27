@@ -19,23 +19,123 @@
   <article class="metric-card"><span>GA median raw penalty</span><strong>{{ summary.algorithms.GA.feasible_soft_penalty.median|default_if_none:'&mdash;' }}</strong><small>Primary quality metric; lower is better</small></article>
 </section>
 
+{% if summary.benchmark %}
+{% with benchmark=summary.benchmark cp=summary.benchmark.by_algorithm.CP_SAT ga=summary.benchmark.by_algorithm.GA %}
+<section class="panel benchmark-panel" aria-labelledby="benchmark-title" data-benchmark-state="{{ benchmark.state }}">
+  <div class="panel__header benchmark-panel__header">
+    <div><p class="eyebrow">Controlled benchmark</p><h2 id="benchmark-title">CP-SAT and Genetic Algorithm</h2></div>
+    <span class="status status--{{ benchmark.state }}">{{ benchmark.state }}</span>
+  </div>
+  <div class="benchmark-panel__body">
+    <div class="benchmark-state benchmark-state--{{ benchmark.state }}" role="status">
+      <strong>Benchmark {{ benchmark.state }}</strong>
+      <p>{{ benchmark.state_message }}</p>
+    </div>
+
+    {% if benchmark.state != 'invalid' and benchmark.comparability_reasons %}
+      <ul class="benchmark-notes" aria-label="Benchmark comparability notes">
+        {% for reason in benchmark.comparability_reasons %}<li><strong>{{ reason.code }}</strong> &mdash; {{ reason.message }}</li>{% endfor %}
+      </ul>
+    {% endif %}
+    {% if benchmark.protocol_integrity.issues %}
+      <ul class="benchmark-notes benchmark-notes--invalid" aria-label="Protocol integrity issues">
+        {% for issue in benchmark.protocol_integrity.issues %}<li><strong>{{ issue.code }}</strong> &mdash; {{ issue.message }}</li>{% endfor %}
+      </ul>
+    {% endif %}
+
+    {% if benchmark.state != 'invalid' and benchmark.state != 'unavailable' %}
+    <div class="benchmark-grid">
+      <article class="benchmark-chart" aria-labelledby="benchmark-feasibility-title" data-benchmark-chart data-scale-max="1">
+        <header><h3 id="benchmark-feasibility-title">Feasibility rate</h3><p>Share of terminal runs feasible &middot; higher is better</p></header>
+        <div class="benchmark-chart__plot">
+          <div class="benchmark-row benchmark-row--cp">
+            <div class="benchmark-row__summary"><span class="benchmark-series"><span class="benchmark-swatch" aria-hidden="true"></span>CP-SAT</span>{% if cp.feasibility_rate.available %}<strong>{{ cp.feasibility_rate.value|floatformat:3 }}</strong>{% else %}<strong>&mdash;</strong>{% endif %}</div>
+            {% if cp.feasibility_rate.available %}
+              <div class="benchmark-track" aria-hidden="true"><span class="benchmark-bar" data-benchmark-value="{{ cp.feasibility_rate.value }}"></span>{% if cp.feasibility_rate.wilson_95 %}<span class="benchmark-whisker" data-benchmark-low="{{ cp.feasibility_rate.wilson_95.0 }}" data-benchmark-high="{{ cp.feasibility_rate.wilson_95.1 }}"><i></i></span>{% endif %}</div>
+              <p class="benchmark-row__detail">Wilson 95%: {{ cp.feasibility_rate.wilson_95.0|floatformat:3 }}&ndash;{{ cp.feasibility_rate.wilson_95.1|floatformat:3 }} &middot; {{ cp.feasibility_rate.feasible_runs }} feasible / {{ cp.feasibility_rate.observed_runs }} observed / {{ cp.feasibility_rate.planned_runs }} planned</p>
+            {% else %}<p class="benchmark-row__unavailable">{{ cp.feasibility_rate.unavailable_reason }}</p>{% endif %}
+          </div>
+          <div class="benchmark-row benchmark-row--ga">
+            <div class="benchmark-row__summary"><span class="benchmark-series"><span class="benchmark-swatch" aria-hidden="true"></span>Genetic Algorithm</span>{% if ga.feasibility_rate.available %}<strong>{{ ga.feasibility_rate.value|floatformat:3 }}</strong>{% else %}<strong>&mdash;</strong>{% endif %}</div>
+            {% if ga.feasibility_rate.available %}
+              <div class="benchmark-track" aria-hidden="true"><span class="benchmark-bar" data-benchmark-value="{{ ga.feasibility_rate.value }}"></span>{% if ga.feasibility_rate.wilson_95 %}<span class="benchmark-whisker" data-benchmark-low="{{ ga.feasibility_rate.wilson_95.0 }}" data-benchmark-high="{{ ga.feasibility_rate.wilson_95.1 }}"><i></i></span>{% endif %}</div>
+              <p class="benchmark-row__detail">Wilson 95%: {{ ga.feasibility_rate.wilson_95.0|floatformat:3 }}&ndash;{{ ga.feasibility_rate.wilson_95.1|floatformat:3 }} &middot; {{ ga.feasibility_rate.feasible_runs }} feasible / {{ ga.feasibility_rate.observed_runs }} observed / {{ ga.feasibility_rate.planned_runs }} planned</p>
+            {% else %}<p class="benchmark-row__unavailable">{{ ga.feasibility_rate.unavailable_reason }}</p>{% endif %}
+          </div>
+        </div>
+        <div class="benchmark-axis" aria-hidden="true"><span>0</span><span>1.000</span></div>
+      </article>
+
+      <article class="benchmark-chart" aria-labelledby="benchmark-penalty-title" data-benchmark-chart>
+        <header><h3 id="benchmark-penalty-title">Feasible raw penalty</h3><p>Median weighted penalty among feasible runs &middot; lower is better</p></header>
+        <div class="benchmark-chart__plot">
+          <div class="benchmark-row benchmark-row--cp">
+            <div class="benchmark-row__summary"><span class="benchmark-series"><span class="benchmark-swatch" aria-hidden="true"></span>CP-SAT</span>{% if cp.median_feasible_raw_penalty.available %}<strong>{{ cp.median_feasible_raw_penalty.value|floatformat:3 }}</strong>{% else %}<strong>&mdash;</strong>{% endif %}</div>
+            {% if cp.median_feasible_raw_penalty.available %}
+              <div class="benchmark-track" aria-hidden="true"><span class="benchmark-bar" data-benchmark-value="{{ cp.median_feasible_raw_penalty.value }}"></span>{% if cp.median_feasible_raw_penalty.bootstrap_95 %}<span class="benchmark-whisker" data-benchmark-low="{{ cp.median_feasible_raw_penalty.bootstrap_95.0 }}" data-benchmark-high="{{ cp.median_feasible_raw_penalty.bootstrap_95.1 }}"><i></i></span>{% endif %}</div>
+              <p class="benchmark-row__detail">Bootstrap 95%: {% if cp.median_feasible_raw_penalty.bootstrap_95 %}{{ cp.median_feasible_raw_penalty.bootstrap_95.0|floatformat:3 }}&ndash;{{ cp.median_feasible_raw_penalty.bootstrap_95.1|floatformat:3 }}{% else %}not estimable{% endif %} &middot; {{ cp.median_feasible_raw_penalty.feasible_runs }} feasible runs</p>
+            {% else %}<p class="benchmark-row__unavailable">{{ cp.median_feasible_raw_penalty.unavailable_reason }}</p>{% endif %}
+          </div>
+          <div class="benchmark-row benchmark-row--ga">
+            <div class="benchmark-row__summary"><span class="benchmark-series"><span class="benchmark-swatch" aria-hidden="true"></span>Genetic Algorithm</span>{% if ga.median_feasible_raw_penalty.available %}<strong>{{ ga.median_feasible_raw_penalty.value|floatformat:3 }}</strong>{% else %}<strong>&mdash;</strong>{% endif %}</div>
+            {% if ga.median_feasible_raw_penalty.available %}
+              <div class="benchmark-track" aria-hidden="true"><span class="benchmark-bar" data-benchmark-value="{{ ga.median_feasible_raw_penalty.value }}"></span>{% if ga.median_feasible_raw_penalty.bootstrap_95 %}<span class="benchmark-whisker" data-benchmark-low="{{ ga.median_feasible_raw_penalty.bootstrap_95.0 }}" data-benchmark-high="{{ ga.median_feasible_raw_penalty.bootstrap_95.1 }}"><i></i></span>{% endif %}</div>
+              <p class="benchmark-row__detail">Bootstrap 95%: {% if ga.median_feasible_raw_penalty.bootstrap_95 %}{{ ga.median_feasible_raw_penalty.bootstrap_95.0|floatformat:3 }}&ndash;{{ ga.median_feasible_raw_penalty.bootstrap_95.1|floatformat:3 }}{% else %}not estimable{% endif %} &middot; {{ ga.median_feasible_raw_penalty.feasible_runs }} feasible runs</p>
+            {% else %}<p class="benchmark-row__unavailable">{{ ga.median_feasible_raw_penalty.unavailable_reason }}</p>{% endif %}
+          </div>
+        </div>
+        <div class="benchmark-axis" aria-hidden="true"><span>0</span><span data-benchmark-scale-label>Observed maximum</span></div>
+      </article>
+
+      <article class="benchmark-chart" aria-labelledby="benchmark-rmst-title" data-benchmark-chart data-scale-max="{{ summary.batch.time_limit_seconds }}">
+        <header><h3 id="benchmark-rmst-title">RMST time to feasibility</h3><p>Restricted mean through {{ summary.batch.time_limit_seconds }}s; censored at deadline &middot; lower is better</p></header>
+        <div class="benchmark-chart__plot">
+          <div class="benchmark-row benchmark-row--cp">
+            <div class="benchmark-row__summary"><span class="benchmark-series"><span class="benchmark-swatch" aria-hidden="true"></span>CP-SAT</span>{% if cp.rmst_time_to_feasibility_seconds.available %}<strong>{{ cp.rmst_time_to_feasibility_seconds.value|floatformat:3 }} s</strong>{% else %}<strong>&mdash;</strong>{% endif %}</div>
+            {% if cp.rmst_time_to_feasibility_seconds.available %}
+              <div class="benchmark-track" aria-hidden="true"><span class="benchmark-bar" data-benchmark-value="{{ cp.rmst_time_to_feasibility_seconds.value }}"></span></div>
+              <p class="benchmark-row__detail">{{ cp.rmst_time_to_feasibility_seconds.censored_runs }} censored / {{ cp.rmst_time_to_feasibility_seconds.observed_runs }} observed &middot; {{ cp.rmst_time_to_feasibility_seconds.deadline_seconds|floatformat:3 }} s deadline</p>
+            {% else %}<p class="benchmark-row__unavailable">{{ cp.rmst_time_to_feasibility_seconds.unavailable_reason }}</p>{% endif %}
+          </div>
+          <div class="benchmark-row benchmark-row--ga">
+            <div class="benchmark-row__summary"><span class="benchmark-series"><span class="benchmark-swatch" aria-hidden="true"></span>Genetic Algorithm</span>{% if ga.rmst_time_to_feasibility_seconds.available %}<strong>{{ ga.rmst_time_to_feasibility_seconds.value|floatformat:3 }} s</strong>{% else %}<strong>&mdash;</strong>{% endif %}</div>
+            {% if ga.rmst_time_to_feasibility_seconds.available %}
+              <div class="benchmark-track" aria-hidden="true"><span class="benchmark-bar" data-benchmark-value="{{ ga.rmst_time_to_feasibility_seconds.value }}"></span></div>
+              <p class="benchmark-row__detail">{{ ga.rmst_time_to_feasibility_seconds.censored_runs }} censored / {{ ga.rmst_time_to_feasibility_seconds.observed_runs }} observed &middot; {{ ga.rmst_time_to_feasibility_seconds.deadline_seconds|floatformat:3 }} s deadline</p>
+            {% else %}<p class="benchmark-row__unavailable">{{ ga.rmst_time_to_feasibility_seconds.unavailable_reason }}</p>{% endif %}
+          </div>
+        </div>
+        <div class="benchmark-axis" aria-hidden="true"><span>0</span><span>{{ summary.batch.time_limit_seconds|floatformat:3 }} s deadline</span></div>
+      </article>
+    </div>
+    <p class="benchmark-method-note">Each panel has its own zero-based scale. Intervals are shown as dark whiskers; exact values remain available in the labels and evidence tables. No mixed-unit overall score is calculated.</p>
+    {% endif %}
+  </div>
+</section>
+{% endwith %}
+{% endif %}
+
+{% if summary.quality_metric_policy.normalizer_review.requires_stakeholder_review %}
+<section class="callout callout--warning" role="note"><div><strong>Normalized quality uses placeholder normalizers.</strong><p>{{ summary.quality_metric_policy.normalizer_review.message }}</p></div></section>
+{% endif %}
+
 <section class="callout callout--info"><div><strong>Decision: {{ summary.primary_engine_decision.winner|default:'No forced winner' }}</strong><p>{{ summary.primary_engine_decision.rationale }}</p><p>Thresholds: 5 percentage-point feasibility difference with Holm p &le; 0.05; otherwise 5% median raw-penalty reduction with Holm p &le; 0.05; otherwise 10% RMST reduction. Deciding tier: {{ summary.primary_engine_decision.deciding_tier|default:'none' }}.</p></div></section>
 
-<section class="panel"><div class="panel__header"><div><p class="eyebrow">Feasibility-first evidence</p><h2>Algorithm summary</h2></div></div><div class="table-wrap"><table><thead><tr><th>Metric</th><th>CP-SAT</th><th>Genetic Algorithm</th></tr></thead><tbody>
+<section class="panel"><div class="panel__header"><div><p class="eyebrow">Feasibility-first evidence</p><h2>Algorithm summary</h2></div></div><div class="table-wrap"><table><caption class="visually-hidden">Detailed CP-SAT and Genetic Algorithm benchmark evidence</caption><thead><tr><th>Metric</th><th>CP-SAT</th><th>Genetic Algorithm</th></tr></thead><tbody>
   <tr><th>Status counts</th><td>{{ summary.algorithms.CP_SAT.status_counts }}</td><td>{{ summary.algorithms.GA.status_counts }}</td></tr>
   <tr><th>RMST time to feasibility (s)</th><td>{{ summary.algorithms.CP_SAT.rmst_time_to_feasibility_seconds|default_if_none:'&mdash;' }}</td><td>{{ summary.algorithms.GA.rmst_time_to_feasibility_seconds|default_if_none:'&mdash;' }}</td></tr>
   <tr><th>Hard-violation vector</th><td>{{ summary.algorithms.CP_SAT.hard_violation_vector }}</td><td>{{ summary.algorithms.GA.hard_violation_vector }}</td></tr>
   <tr><th>Raw-penalty median bootstrap 95%</th><td>{{ summary.algorithms.CP_SAT.feasible_soft_penalty_median_bootstrap_95|default_if_none:'&mdash;' }}</td><td>{{ summary.algorithms.GA.feasible_soft_penalty_median_bootstrap_95|default_if_none:'&mdash;' }}</td></tr>
 </tbody></table></div></section>
 
-<section class="panel"><div class="panel__header"><div><p class="eyebrow">Timing boundaries</p><h2>Median wall-clock distributions</h2></div></div><p>Shared preprocessing, solver execution, independent validation, and end-to-end processing are reported separately.</p><div class="table-wrap"><table><thead><tr><th>Timing metric (seconds)</th><th>CP-SAT median</th><th>GA median</th></tr></thead><tbody>
+<section class="panel"><div class="panel__header"><div><p class="eyebrow">Timing boundaries</p><h2>Median wall-clock distributions</h2></div></div><p>Shared preprocessing, solver execution, independent validation, and end-to-end processing are reported separately.</p><div class="table-wrap"><table><caption class="visually-hidden">Median wall-clock timing evidence by algorithm</caption><thead><tr><th>Timing metric (seconds)</th><th>CP-SAT median</th><th>GA median</th></tr></thead><tbody>
   <tr><th>Shared preprocessing</th><td>{{ summary.algorithms.CP_SAT.shared_preprocessing_seconds.median|default_if_none:'&mdash;' }}</td><td>{{ summary.algorithms.GA.shared_preprocessing_seconds.median|default_if_none:'&mdash;' }}</td></tr>
   <tr><th>Solver execution</th><td>{{ summary.algorithms.CP_SAT.execution_seconds.median|default_if_none:'&mdash;' }}</td><td>{{ summary.algorithms.GA.execution_seconds.median|default_if_none:'&mdash;' }}</td></tr>
   <tr><th>Independent validation</th><td>{{ summary.algorithms.CP_SAT.independent_validation_seconds.median|default_if_none:'&mdash;' }}</td><td>{{ summary.algorithms.GA.independent_validation_seconds.median|default_if_none:'&mdash;' }}</td></tr>
   <tr><th>End-to-end processing</th><td>{{ summary.algorithms.CP_SAT.end_to_end_processing_seconds.median|default_if_none:'&mdash;' }}</td><td>{{ summary.algorithms.GA.end_to_end_processing_seconds.median|default_if_none:'&mdash;' }}</td></tr>
 </tbody></table></div></section>
 
-<section class="panel"><div class="panel__header"><div><p class="eyebrow">Quality decomposition</p><h2>Feasible schedules only</h2></div></div><p>The raw weighted penalty remains primary. Per-meeting penalty and normalized 0&ndash;100 quality are secondary views.</p><div class="table-wrap"><table><thead><tr><th>Median quality measure</th><th>CP-SAT</th><th>GA</th></tr></thead><tbody>
+<section class="panel"><div class="panel__header"><div><p class="eyebrow">Quality decomposition</p><h2>Feasible schedules only</h2></div></div><p>The raw weighted penalty remains primary. Per-meeting penalty and normalized 0&ndash;100 quality are secondary views.</p><div class="table-wrap"><table><caption class="visually-hidden">Feasible-schedule quality measures by algorithm</caption><thead><tr><th>Median quality measure</th><th>CP-SAT</th><th>GA</th></tr></thead><tbody>
   <tr><th>Raw weighted soft penalty (lower is better)</th><td>{{ summary.algorithms.CP_SAT.feasible_soft_penalty.median|default_if_none:'&mdash;' }}</td><td>{{ summary.algorithms.GA.feasible_soft_penalty.median|default_if_none:'&mdash;' }}</td></tr>
   <tr><th>Penalty per meeting (lower is better)</th><td>{{ summary.algorithms.CP_SAT.feasible_penalty_per_meeting.median|default_if_none:'&mdash;' }}</td><td>{{ summary.algorithms.GA.feasible_penalty_per_meeting.median|default_if_none:'&mdash;' }}</td></tr>
   <tr><th>Normalized quality (higher is better)</th><td>{{ summary.algorithms.CP_SAT.feasible_normalized_quality_score.median|default_if_none:'&mdash;' }}</td><td>{{ summary.algorithms.GA.feasible_normalized_quality_score.median|default_if_none:'&mdash;' }}</td></tr>

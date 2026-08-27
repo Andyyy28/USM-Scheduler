@@ -25,6 +25,8 @@ except ImportError as exc:  # pragma: no cover - environment dependent
 else:
     _ORTOOLS_IMPORT_ERROR = None
 
+CP_SAT_IMPLEMENTATION_VERSION = "cp-sat-v2"
+
 
 class ORToolsUnavailableError(RuntimeError):
     """Raised only when CP-SAT is requested without OR-Tools installed."""
@@ -137,6 +139,9 @@ class CpSatSolver:
             + profile.load_imbalance_weight * load_imbalance_expr
         )
         model.Minimize(objective_expr)
+        model_proto = model.Proto()
+        model_variable_count = len(model_proto.variables)
+        model_constraint_count = len(model_proto.constraints)
 
         solver = cp_model.CpSolver()
         solver.parameters.max_time_in_seconds = max(1e-6, deadline - monotonic())
@@ -189,9 +194,12 @@ class CpSatSolver:
             )
 
         metrics = (
+            ("implementation_version", CP_SAT_IMPLEMENTATION_VERSION),
             ("best_objective_bound", best_bound),
             ("branches", solver.NumBranches()),
             ("conflicts", solver.NumConflicts()),
+            ("model_constraint_count", model_constraint_count),
+            ("model_variable_count", model_variable_count),
             ("objective_value", objective_value),
             ("relative_gap", relative_gap),
             ("solver_wall_time_seconds", solver.WallTime()),
@@ -254,54 +262,73 @@ def _gap_expression(
     atoms_by_day: dict[str, list[str]] = defaultdict(list)
     for atom in sorted(problem.time_atoms, key=lambda item: (item.day_index, item.order, item.atom_id)):
         atoms_by_day[atom.day_id].append(atom.atom_id)
+    atom_day = {atom.atom_id: atom.day_id for atom in problem.time_atoms}
 
     choices_by_resource_atom: dict[tuple[str, str], list[Any]] = defaultdict(list)
-    resource_ids: set[str] = set()
+    active_resource_days: set[tuple[str, str]] = set()
     for event in problem.events:
         resources = event_resources[event.event_id]
-        resource_ids.update(resources)
         for candidate in event.candidates:
             variable = variables[(event.event_id, candidate.candidate_id)]
             for resource_id in resources:
                 for atom_id in candidate.occupied_atom_ids:
                     choices_by_resource_atom[(resource_id, atom_id)].append(variable)
+                    active_resource_days.add((resource_id, atom_day[atom_id]))
 
     gap_variables = []
-    for resource_id in sorted(resource_ids):
-        for day_id in problem.day_ids:
-            occupancy = []
-            for atom_id in atoms_by_day[day_id]:
-                choices = choices_by_resource_atom[(resource_id, atom_id)]
-                occupied = model.NewBoolVar(
-                    f"occupied__{resource_kind}__{resource_id}__{atom_id}"
-                )
-                model.Add(occupied == sum(choices))
-                occupancy.append(occupied)
+    for resource_id, day_id in sorted(active_resource_days):
+        day_atoms = atoms_by_day[day_id]
+        active_positions = [
+            position
+            for position, atom_id in enumerate(day_atoms)
+            if choices_by_resource_atom[(resource_id, atom_id)]
+        ]
+        first_position = min(active_positions)
+        last_position = max(active_positions)
+        span_atoms = day_atoms[first_position : last_position + 1]
+        occupancy = []
+        for atom_id in span_atoms:
+            choices = choices_by_resource_atom[(resource_id, atom_id)]
+            occupied = model.NewBoolVar(
+                f"occupied__{resource_kind}__{resource_id}__{atom_id}"
+            )
+            model.Add(occupied == sum(choices))
+            occupancy.append(occupied)
 
-            for position, occupied in enumerate(occupancy):
-                before = model.NewBoolVar(
-                    f"before__{resource_kind}__{resource_id}__{day_id}__{position}"
-                )
-                after = model.NewBoolVar(
-                    f"after__{resource_kind}__{resource_id}__{day_id}__{position}"
-                )
-                if position == 0:
-                    model.Add(before == 0)
-                else:
-                    model.AddMaxEquality(before, occupancy[:position])
-                if position == len(occupancy) - 1:
-                    model.Add(after == 0)
-                else:
-                    model.AddMaxEquality(after, occupancy[position + 1 :])
+        before = [
+            model.NewBoolVar(
+                f"before__{resource_kind}__{resource_id}__{day_id}__{position}"
+            )
+            for position in range(len(occupancy))
+        ]
+        after = [
+            model.NewBoolVar(
+                f"after__{resource_kind}__{resource_id}__{day_id}__{position}"
+            )
+            for position in range(len(occupancy))
+        ]
+        model.Add(before[0] == 0)
+        for position in range(1, len(occupancy)):
+            model.AddMaxEquality(
+                before[position],
+                (before[position - 1], occupancy[position - 1]),
+            )
+        model.Add(after[-1] == 0)
+        for position in range(len(occupancy) - 2, -1, -1):
+            model.AddMaxEquality(
+                after[position],
+                (after[position + 1], occupancy[position + 1]),
+            )
 
-                gap = model.NewBoolVar(
-                    f"gap__{resource_kind}__{resource_id}__{day_id}__{position}"
-                )
-                model.Add(gap <= before)
-                model.Add(gap <= after)
-                model.Add(gap + occupied <= 1)
-                model.Add(gap >= before + after - occupied - 1)
-                gap_variables.append(gap)
+        for position, occupied in enumerate(occupancy):
+            gap = model.NewBoolVar(
+                f"gap__{resource_kind}__{resource_id}__{day_id}__{position}"
+            )
+            model.Add(gap <= before[position])
+            model.Add(gap <= after[position])
+            model.Add(gap + occupied <= 1)
+            model.Add(gap >= before[position] + after[position] - occupied - 1)
+            gap_variables.append(gap)
     return sum(gap_variables)
 
 

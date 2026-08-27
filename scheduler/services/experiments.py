@@ -11,6 +11,7 @@ from __future__ import annotations
 import csv
 import io
 import json
+import math
 import os
 import platform
 from collections import Counter, defaultdict
@@ -41,6 +42,7 @@ from scheduler.services.statistics import (
 DEFAULT_EXPERIMENT_SEEDS = tuple(range(1001, 1031))
 RETRY_EPISODE_CAP = 5
 PROTOCOL_VERSION = "1.0"
+BENCHMARK_SCHEMA_VERSION = "1.0"
 DEFAULT_MEMORY_LIMIT_MB = int(getattr(settings, "SOLVER_MEMORY_LIMIT_MB", 2048))
 SENSITIVITY_MULTIPLIERS = (0.5, 1.0, 2.0)
 SUCCESS_STATUSES = {models.RunStatus.FEASIBLE, models.RunStatus.OPTIMAL}
@@ -375,6 +377,7 @@ def summarize_experiment(batch: models.ExperimentBatch) -> dict[str, Any]:
     primary_engine_decision = _primary_engine_decision(
         algorithm_summaries, comparative_tests
     )
+    benchmark = _benchmark_summary(batch, runs, algorithm_summaries)
 
     return {
         "protocol_version": PROTOCOL_VERSION,
@@ -403,6 +406,7 @@ def summarize_experiment(batch: models.ExperimentBatch) -> dict[str, Any]:
             "created_at": batch.created_at.isoformat(),
         },
         "algorithms": algorithm_summaries,
+        "benchmark": benchmark,
         "effect_sizes": {
             "cp_sat_probability_lower_feasible_penalty_a12": _a12_or_none(
                 cp_penalties, ga_penalties
@@ -426,6 +430,7 @@ def summarize_experiment(batch: models.ExperimentBatch) -> dict[str, Any]:
                 "feasible_normalized_quality_score",
             ],
             "objective_component_weights": _objective_component_weights(batch.snapshot),
+            "normalizer_review": _objective_normalizer_review(batch.snapshot),
         },
         "retry_episodes": _retry_episode_summary(runs),
         "room_utilization": _room_utilization_summary(batch, by_algorithm),
@@ -440,6 +445,450 @@ def summarize_experiment(batch: models.ExperimentBatch) -> dict[str, Any]:
             for index, run in enumerate(runs)
         ],
     }
+
+
+def _objective_normalizer_review(snapshot: models.ProblemSnapshot) -> dict[str, Any]:
+    """Flag the known all-ones defaults without changing quality semantics."""
+
+    expected = models.default_objective_normalizers()
+    configured = snapshot.objective_profile.normalization_denominators
+    values = configured if isinstance(configured, Mapping) else {}
+    default_components = sorted(
+        component
+        for component, default_value in expected.items()
+        if values.get(component) == default_value
+    )
+    all_defaults = len(default_components) == len(expected)
+    return {
+        "status": "placeholder_defaults" if all_defaults else "configured",
+        "requires_stakeholder_review": all_defaults,
+        "all_default_denominators_are_one": all_defaults,
+        "default_components": default_components,
+        "message": (
+            "All objective normalizers use the placeholder denominator 1; interpret "
+            "the normalized quality score as secondary until stakeholder review."
+            if all_defaults
+            else "Objective normalizers are not the complete all-ones default set."
+        ),
+    }
+
+
+def _benchmark_summary(
+    batch: models.ExperimentBatch,
+    runs: Sequence[models.ScheduleRun],
+    algorithm_summaries: Mapping[str, Mapping[str, Any]],
+) -> dict[str, Any]:
+    """Project experiment evidence into a small, chart-safe benchmark contract.
+
+    This deliberately contains no blended score. Each metric retains its own
+    unit, direction, denominator, and uncertainty interval so a partial report
+    cannot accidentally look like a completed head-to-head result.
+    """
+
+    issues = _experiment_protocol_issues(batch, runs)
+    algorithm_ids = [
+        models.SolverAlgorithm.CP_SAT,
+        models.SolverAlgorithm.GENETIC_ALGORITHM,
+    ]
+    by_algorithm: dict[str, dict[str, Any]] = {}
+    for algorithm in algorithm_ids:
+        summary = algorithm_summaries[algorithm]
+        planned = int(summary.get("planned_runs", 0))
+        observed = int(summary.get("observed_runs", 0))
+        pending = int(summary.get("pending_runs", 0))
+        feasible = int(summary.get("feasible_runs", 0))
+        rate = _optional_float(summary.get("success_rate"))
+        interval = summary.get("success_rate_wilson_95")
+        wilson = (
+            list(interval)
+            if isinstance(interval, (list, tuple)) and len(interval) == 2
+            else [None, None]
+        )
+        penalty = _summary_median(summary.get("feasible_soft_penalty"))
+        penalty_interval = summary.get("feasible_soft_penalty_median_bootstrap_95")
+        penalty_bootstrap = (
+            list(penalty_interval)
+            if isinstance(penalty_interval, (list, tuple)) and len(penalty_interval) == 2
+            else None
+        )
+        rmst = _optional_float(summary.get("rmst_time_to_feasibility_seconds"))
+        by_algorithm[algorithm] = {
+            "algorithm": algorithm,
+            "label": dict(models.SolverAlgorithm.choices)[algorithm],
+            "planned_runs": planned,
+            "observed_runs": observed,
+            "pending_runs": pending,
+            "feasibility_rate": {
+                "available": rate is not None,
+                "value": rate,
+                "wilson_95": wilson,
+                "feasible_runs": feasible,
+                "observed_runs": observed,
+                "planned_runs": planned,
+                "direction": "higher_is_better",
+                "unavailable_reason": (
+                    None if rate is not None else "No terminal runs have been observed."
+                ),
+            },
+            "median_feasible_raw_penalty": {
+                "available": penalty is not None,
+                "value": penalty,
+                "bootstrap_95": penalty_bootstrap,
+                "feasible_runs": feasible,
+                "direction": "lower_is_better",
+                "unit": "raw_weighted_soft_penalty",
+                "unavailable_reason": (
+                    None
+                    if penalty is not None
+                    else "No feasible runs with a raw penalty have been observed."
+                ),
+            },
+            "rmst_time_to_feasibility_seconds": {
+                "available": rmst is not None,
+                "value": rmst,
+                "deadline_seconds": float(batch.time_limit_seconds),
+                "observed_runs": observed,
+                "censored_runs": int(summary.get("rmst_censored_runs", 0)),
+                "direction": "lower_is_better",
+                "unit": "seconds",
+                "unavailable_reason": (
+                    None if rmst is not None else "No terminal runs have been observed."
+                ),
+            },
+        }
+
+    observed_counts = [by_algorithm[item]["observed_runs"] for item in algorithm_ids]
+    pending_total = sum(by_algorithm[item]["pending_runs"] for item in algorithm_ids)
+    comparability_reasons: list[dict[str, str]] = []
+    if issues:
+        state = "invalid"
+        comparable = False
+        state_message = (
+            "Benchmark invalid: controlled-experiment protocol integrity checks failed."
+        )
+        comparability_reasons.extend(
+            {"code": str(issue["code"]), "message": str(issue["message"])}
+            for issue in issues
+        )
+    elif not any(observed_counts):
+        state = "unavailable"
+        comparable = False
+        state_message = "Benchmark unavailable: no terminal runs have been observed."
+        comparability_reasons.append(
+            {
+                "code": "NO_TERMINAL_RUNS",
+                "message": "At least one terminal run from each algorithm is required.",
+            }
+        )
+    elif not all(observed_counts):
+        state = "preliminary"
+        comparable = False
+        state_message = (
+            "Preliminary benchmark: both algorithms need at least one terminal run "
+            "before comparison."
+        )
+        comparability_reasons.append(
+            {
+                "code": "ONE_SIDED_EVIDENCE",
+                "message": "Only one algorithm currently has terminal observations.",
+            }
+        )
+    elif pending_total:
+        state = "preliminary"
+        comparable = True
+        state_message = (
+            "Preliminary benchmark: results may change while planned runs are pending."
+        )
+    else:
+        state = "complete"
+        comparable = True
+        state_message = (
+            "Benchmark complete: all planned CP-SAT and GA runs are terminal and "
+            "protocol-compatible."
+        )
+
+    return {
+        "schema_version": BENCHMARK_SCHEMA_VERSION,
+        "state": state,
+        "state_message": state_message,
+        "comparable": comparable,
+        "comparability_reasons": comparability_reasons,
+        "protocol_integrity": {
+            "valid": not issues,
+            "issues": issues,
+        },
+        "algorithm_ids": algorithm_ids,
+        "by_algorithm": by_algorithm,
+    }
+
+
+def _experiment_protocol_issues(
+    batch: models.ExperimentBatch, runs: Sequence[models.ScheduleRun]
+) -> list[dict[str, Any]]:
+    """Return deterministic protocol defects without discarding run evidence."""
+
+    issues: list[dict[str, Any]] = []
+    expected = {
+        (int(seed), algorithm)
+        for seed in batch.seeds
+        for algorithm in (
+            models.SolverAlgorithm.CP_SAT,
+            models.SolverAlgorithm.GENETIC_ALGORITHM,
+        )
+    }
+    observed_cells = [(run.seed, run.algorithm) for run in runs]
+    observed = set(observed_cells)
+    if len(observed_cells) != len(observed) or observed != expected:
+        missing = sorted(expected - observed)
+        unexpected = sorted(observed - expected)
+        issues.append(
+            {
+                "code": "RUN_MATRIX_MISMATCH",
+                "message": "The persisted run matrix does not contain exactly one run per seed and algorithm.",
+                "missing_cells": [list(item) for item in missing],
+                "unexpected_cells": [list(item) for item in unexpected],
+            }
+        )
+
+    wrong_snapshot = [run.pk for run in runs if run.snapshot_id != batch.snapshot_id]
+    if wrong_snapshot:
+        issues.append(
+            {
+                "code": "SNAPSHOT_MISMATCH",
+                "message": "One or more runs do not use the experiment snapshot.",
+                "run_ids": wrong_snapshot,
+            }
+        )
+
+    deadline_mismatch: list[int] = []
+    worker_mismatch: list[int] = []
+    protocol_mismatch: list[int] = []
+    configuration_signatures: defaultdict[str, set[str]] = defaultdict(set)
+    implementation_versions: defaultdict[str, set[str]] = defaultdict(set)
+    configuration_errors: list[int] = []
+    verification_failures: list[int] = []
+    implementation_provenance_mismatches: list[int] = []
+    expected_problem_hash: str | None = None
+    has_problem_hash_evidence = any(
+        run.status in TERMINAL_STATUSES
+        and isinstance(run.diagnostics, Mapping)
+        and bool(run.diagnostics.get("problem_hash"))
+        for run in runs
+    )
+    if has_problem_hash_evidence:
+        try:
+            from scheduler.services.problem_builder import load_problem
+
+            expected_problem_hash = load_problem(batch.snapshot).canonical_hash
+        except (KeyError, TypeError, ValueError):
+            # Some legacy/test snapshots predate the complete serialized-domain
+            # contract. Explicit service-verification evidence remains authoritative.
+            pass
+    for run in runs:
+        try:
+            config = build_solver_config(run)
+        except (TypeError, ValueError):
+            configuration_errors.append(run.pk)
+            continue
+        if not math.isclose(
+            config.time_limit_seconds,
+            float(batch.time_limit_seconds),
+            rel_tol=0.0,
+            abs_tol=1e-12,
+        ):
+            deadline_mismatch.append(run.pk)
+        if config.worker_count != batch.cpu_limit:
+            worker_mismatch.append(run.pk)
+        if run.configuration.get("benchmark_protocol") != PROTOCOL_VERSION:
+            protocol_mismatch.append(run.pk)
+        configuration_signatures[run.algorithm].add(
+            comparison_configuration_signature(run)
+        )
+        implementation_version = run_implementation_version(run)
+        if run.status in TERMINAL_STATUSES or implementation_version != "legacy-unversioned":
+            implementation_versions[run.algorithm].add(implementation_version)
+        if _implementation_version_mismatch(run):
+            implementation_provenance_mismatches.append(run.pk)
+        diagnostics = run.diagnostics if isinstance(run.diagnostics, Mapping) else {}
+        diagnostic_metrics = diagnostics.get("metrics", {})
+        if run.status in TERMINAL_STATUSES and isinstance(diagnostic_metrics, Mapping):
+            verification_passed = diagnostic_metrics.get("service_verification_passed")
+            verification_failed = (
+                verification_passed == 0
+                or verification_passed == "0"
+                or "reported_problem_hash" in diagnostic_metrics
+                or "reported_config_hash" in diagnostic_metrics
+            )
+            diagnostic_config_hash = diagnostics.get("config_hash")
+            diagnostic_problem_hash = diagnostics.get("problem_hash")
+            verification_failed = verification_failed or bool(
+                diagnostic_config_hash
+                and diagnostic_config_hash != config.canonical_hash
+            )
+            verification_failed = verification_failed or bool(
+                expected_problem_hash
+                and diagnostic_problem_hash
+                and diagnostic_problem_hash != expected_problem_hash
+            )
+            if verification_failed:
+                verification_failures.append(run.pk)
+
+    for code, message, run_ids in (
+        (
+            "INVALID_SOLVER_CONFIGURATION",
+            "One or more run configurations cannot be resolved.",
+            configuration_errors,
+        ),
+        (
+            "DEADLINE_MISMATCH",
+            "One or more runs do not use the experiment deadline.",
+            deadline_mismatch,
+        ),
+        (
+            "WORKER_COUNT_MISMATCH",
+            "One or more runs do not use the experiment worker count.",
+            worker_mismatch,
+        ),
+        (
+            "PROTOCOL_VERSION_MISMATCH",
+            "One or more runs do not carry the frozen benchmark protocol version.",
+            protocol_mismatch,
+        ),
+        (
+            "RESULT_VERIFICATION_FAILURE",
+            "One or more terminal results failed independent service verification.",
+            verification_failures,
+        ),
+        (
+            "IMPLEMENTATION_PROVENANCE_MISMATCH",
+            "One or more terminal results report a different implementation version than requested.",
+            implementation_provenance_mismatches,
+        ),
+    ):
+        if run_ids:
+            issues.append({"code": code, "message": message, "run_ids": run_ids})
+
+    for algorithm in (
+        models.SolverAlgorithm.CP_SAT,
+        models.SolverAlgorithm.GENETIC_ALGORITHM,
+    ):
+        if len(configuration_signatures[algorithm]) > 1:
+            issues.append(
+                {
+                    "code": "ALGORITHM_CONFIGURATION_MISMATCH",
+                    "message": f"{algorithm} runs contain multiple resolved configurations.",
+                    "algorithm": algorithm,
+                }
+            )
+        if len(implementation_versions[algorithm]) > 1:
+            issues.append(
+                {
+                    "code": "IMPLEMENTATION_VERSION_MISMATCH",
+                    "message": f"{algorithm} runs contain multiple implementation versions.",
+                    "algorithm": algorithm,
+                }
+            )
+    return issues
+
+
+def comparison_configuration_signature(run: models.ScheduleRun) -> str:
+    """Hash result-affecting solver parameters, excluding comparison strata."""
+
+    resolved = build_solver_config(run).to_dict()
+    for field in ("algorithm", "seed", "time_limit_seconds", "worker_count"):
+        resolved.pop(field, None)
+    return models.canonical_sha256(resolved)
+
+
+def run_implementation_version(run: models.ScheduleRun) -> str:
+    """Read immutable implementation provenance with an explicit legacy value."""
+
+    configured = _configured_implementation_version(run)
+    diagnostic_version = _diagnostic_implementation_version(run)
+    if run.status in TERMINAL_STATUSES:
+        return diagnostic_version or "legacy-unversioned"
+    return configured or diagnostic_version or "legacy-unversioned"
+
+
+def _configured_implementation_version(run: models.ScheduleRun) -> str | None:
+    configured = run.configuration.get("implementation_version")
+    if configured in (None, ""):
+        configured = run.configuration.get("solver_implementation_version")
+    return str(configured) if configured not in (None, "") else None
+
+
+def _diagnostic_implementation_version(run: models.ScheduleRun) -> str | None:
+    diagnostics = run.diagnostics if isinstance(run.diagnostics, Mapping) else {}
+    metric_evidence = diagnostics.get("metrics", {})
+    if isinstance(metric_evidence, Mapping):
+        diagnostic_version = metric_evidence.get("implementation_version")
+        if diagnostic_version not in (None, ""):
+            return str(diagnostic_version)
+    diagnostic_version = diagnostics.get("implementation_version")
+    if diagnostic_version not in (None, ""):
+        return str(diagnostic_version)
+    return None
+
+
+def _implementation_version_mismatch(run: models.ScheduleRun) -> bool:
+    if run.status not in TERMINAL_STATUSES:
+        return False
+    configured = _configured_implementation_version(run)
+    diagnostic = _diagnostic_implementation_version(run)
+    return bool(configured and diagnostic and configured != diagnostic)
+
+
+def snapshot_comparison_heterogeneity(
+    runs: Sequence[models.ScheduleRun],
+) -> dict[str, Any]:
+    """Describe dimensions that make an ad-hoc snapshot comparison invalid."""
+
+    deadlines: set[float] = set()
+    worker_counts: set[int] = set()
+    versions: defaultdict[str, set[str]] = defaultdict(set)
+    configurations: defaultdict[str, set[str]] = defaultdict(set)
+    invalid_configuration_runs: list[int] = []
+    implementation_provenance_mismatch_runs: list[int] = []
+    for run in runs:
+        try:
+            config = build_solver_config(run)
+            deadlines.add(config.time_limit_seconds)
+            worker_counts.add(config.worker_count)
+            configurations[run.algorithm].add(comparison_configuration_signature(run))
+        except (TypeError, ValueError):
+            invalid_configuration_runs.append(run.pk)
+        implementation_version = run_implementation_version(run)
+        if run.status in TERMINAL_STATUSES or implementation_version != "legacy-unversioned":
+            versions[run.algorithm].add(implementation_version)
+        if _implementation_version_mismatch(run):
+            implementation_provenance_mismatch_runs.append(run.pk)
+
+    heterogeneous: dict[str, Any] = {}
+    if len(deadlines) > 1:
+        heterogeneous["time_limit_seconds"] = sorted(deadlines)
+    if len(worker_counts) > 1:
+        heterogeneous["worker_count"] = sorted(worker_counts)
+    mixed_versions = {
+        algorithm: sorted(values)
+        for algorithm, values in versions.items()
+        if len(values) > 1
+    }
+    if mixed_versions:
+        heterogeneous["implementation_versions_by_algorithm"] = mixed_versions
+    mixed_configurations = {
+        algorithm: sorted(values)
+        for algorithm, values in configurations.items()
+        if len(values) > 1
+    }
+    if mixed_configurations:
+        heterogeneous["configuration_hashes_by_algorithm"] = mixed_configurations
+    if invalid_configuration_runs:
+        heterogeneous["invalid_configuration_run_ids"] = invalid_configuration_runs
+    if implementation_provenance_mismatch_runs:
+        heterogeneous["implementation_provenance_mismatch_run_ids"] = (
+            implementation_provenance_mismatch_runs
+        )
+    return heterogeneous
 
 
 def export_experiment_json(batch: models.ExperimentBatch) -> bytes:
@@ -751,6 +1200,9 @@ def _primary_engine_decision(
     feasibility_winner = None
     if feasibility_practical and feasibility_statistical and cp_rate != ga_rate:
         feasibility_winner = cp_algorithm if cp_rate > ga_rate else ga_algorithm
+    feasibility_available = cp_rate is not None and ga_rate is not None
+    feasibility_unresolved = feasibility_practical and not feasibility_statistical
+    quality_applicable = feasibility_available and not feasibility_practical
 
     cp_penalty = _summary_median(cp.get("feasible_soft_penalty"))
     ga_penalty = _summary_median(ga.get("feasible_soft_penalty"))
@@ -765,7 +1217,11 @@ def _primary_engine_decision(
     quality_statistical = (
         quality_p is not None and quality_p <= thresholds["holm_adjusted_alpha"]
     )
-    quality_winner = quality_candidate if quality_practical and quality_statistical else None
+    quality_winner = (
+        quality_candidate
+        if quality_applicable and quality_practical and quality_statistical
+        else None
+    )
 
     cp_rmst = _optional_float(cp.get("rmst_time_to_feasibility_seconds"))
     ga_rmst = _optional_float(ga.get("rmst_time_to_feasibility_seconds"))
@@ -776,19 +1232,53 @@ def _primary_engine_decision(
         rmst_reduction is not None
         and rmst_reduction >= thresholds["rmst_relative_reduction"]
     )
-    time_winner = time_candidate if time_practical else None
-    time_p = _adjusted_p_value(outcomes.get("censored_time_to_feasibility_seconds"))
+    censored_time_report = outcomes.get("censored_time_to_feasibility_seconds")
+    time_p = _adjusted_p_value(censored_time_report)
+    censored_time_difference = _outcome_difference(censored_time_report)
+    censored_time_candidate = None
+    if censored_time_difference is not None and censored_time_difference != 0:
+        censored_time_candidate = (
+            cp_algorithm if censored_time_difference < 0 else ga_algorithm
+        )
+    time_direction_agrees = (
+        time_candidate is not None and time_candidate == censored_time_candidate
+    )
+    time_applicable = quality_applicable and quality_winner is None
+    time_winner = (
+        time_candidate
+        if time_applicable and time_practical and time_direction_agrees
+        else None
+    )
 
-    if feasibility_winner:
+    if not feasibility_available:
+        winner = None
+        deciding_tier = "feasibility"
+        decision_status = "insufficient_feasibility_evidence"
+        rationale = (
+            "Feasibility rates are unavailable for one or both algorithms; "
+            "lower-priority tiers were not evaluated."
+        )
+    elif feasibility_winner:
         winner = feasibility_winner
         deciding_tier = "feasibility"
+        decision_status = "winner"
         rationale = (
             f"{winner} exceeded the feasibility-rate threshold and the Holm-adjusted "
             "significance threshold; lower-priority tiers were not used."
         )
+    elif feasibility_unresolved:
+        winner = None
+        deciding_tier = "feasibility"
+        decision_status = "unresolved_feasibility"
+        rationale = (
+            "The feasibility-rate difference reached 5 percentage points but was not "
+            "Holm-adjusted significant; feasibility is unresolved and lower-priority "
+            "tiers were not evaluated."
+        )
     elif quality_winner:
         winner = quality_winner
         deciding_tier = "feasible_schedule_quality"
+        decision_status = "winner"
         rationale = (
             f"{winner} achieved at least a 5% reduction in median common raw penalty "
             "with Holm-adjusted p <= 0.05 after feasibility did not decide."
@@ -796,22 +1286,26 @@ def _primary_engine_decision(
     elif time_winner:
         winner = time_winner
         deciding_tier = "time_to_feasibility"
+        decision_status = "winner"
         rationale = (
             f"{winner} achieved at least a 10% reduction in RMST time to feasibility "
-            "after feasibility and quality did not decide."
+            "and the censored-time analysis pointed in the same direction after "
+            "feasibility and quality did not decide."
         )
     else:
         winner = None
         deciding_tier = None
+        decision_status = "no_winner"
         rationale = (
-            "No algorithm cleared a preregistered practical-and-statistical decision "
-            "threshold at the applicable tier; no winner is forced."
+            "No algorithm cleared the preregistered decision rule at the applicable "
+            "tier; no winner is forced."
         )
 
     return {
         "winner": winner,
         "no_forced_winner": winner is None,
         "deciding_tier": deciding_tier,
+        "decision_status": decision_status,
         "rationale": rationale,
         "lexicographic_order": [
             "feasibility",
@@ -825,8 +1319,11 @@ def _primary_engine_decision(
                 "ga_success_rate": ga_rate,
                 "absolute_difference": rate_difference,
                 "holm_adjusted_p": feasibility_p,
+                "available": feasibility_available,
                 "practical_threshold_met": feasibility_practical,
                 "statistical_threshold_met": feasibility_statistical,
+                "blocks_lower_tiers": feasibility_practical,
+                "unresolved": feasibility_unresolved,
                 "winner_if_decisive": feasibility_winner,
             },
             "feasible_schedule_quality": {
@@ -835,6 +1332,7 @@ def _primary_engine_decision(
                 "ga_median": ga_penalty,
                 "relative_reduction": quality_reduction,
                 "holm_adjusted_p": quality_p,
+                "applicable": quality_applicable,
                 "practical_threshold_met": quality_practical,
                 "statistical_threshold_met": quality_statistical,
                 "winner_if_decisive": quality_winner,
@@ -845,6 +1343,11 @@ def _primary_engine_decision(
                 "ga_rmst_seconds": ga_rmst,
                 "relative_reduction": rmst_reduction,
                 "holm_adjusted_p_descriptive": time_p,
+                "censored_time_observed_difference_cp_sat_minus_ga": (
+                    censored_time_difference
+                ),
+                "censored_time_direction_agrees": time_direction_agrees,
+                "applicable": time_applicable,
                 "practical_threshold_met": time_practical,
                 "winner_if_decisive": time_winner,
             },
@@ -856,6 +1359,12 @@ def _adjusted_p_value(report: Any) -> float | None:
     if not isinstance(report, Mapping) or not report.get("available"):
         return None
     return _optional_float(report.get("p_value_holm_adjusted"))
+
+
+def _outcome_difference(report: Any) -> float | None:
+    if not isinstance(report, Mapping) or not report.get("available"):
+        return None
+    return _optional_float(report.get("observed_difference_first_minus_second"))
 
 
 def _summary_median(summary: Any) -> float | None:
