@@ -1,11 +1,11 @@
 {% extends 'scheduler/base.html' %}
 
 {% block content %}
-<header class="page-header"><div><p class="eyebrow">Schedule management</p><h1>University timetables</h1><p>Read the weekly schedule, inspect detailed assignments, and move independently validated versions through human review.</p></div><div class="page-actions"><a class="button button--secondary" href="{% url 'scheduler:help' %}#timetables">Timetable guide</a><a class="button button--secondary" href="{% url 'scheduler:reviews' %}">Review queue</a></div></header>
+<header class="page-header"><div><p class="eyebrow">Timetables</p><h1>Check the class schedule</h1><p>Choose a version, review the weekly timetable, and take the next available action.</p></div><div class="page-actions"><a class="button button--secondary" href="{% url 'scheduler:help' %}#check">How to check a timetable</a><a class="button button--secondary" href="{% url 'scheduler:reviews' %}">Open reviews</a></div></header>
 
 {% if schedules %}
   <section class="panel schedule-selector" aria-labelledby="schedule-selector-title">
-    <div><p class="eyebrow">Published and candidate versions</p><h2 id="schedule-selector-title">Select a timetable</h2></div>
+    <div><p class="eyebrow">Schedule versions</p><h2 id="schedule-selector-title">Choose a timetable</h2></div>
     <form method="get"><div class="field"><label class="visually-hidden" for="schedule-select">Schedule version</label><select id="schedule-select" name="schedule" data-auto-submit>{% for schedule in schedules %}<option value="{{ schedule.id }}" {% if schedule.id == selected_id %}selected{% endif %}>{{ schedule.term }} · Version {{ schedule.version }} · {{ schedule.status }}</option>{% endfor %}</select></div><button class="button button--secondary no-js-only" type="submit">Open</button></form>
   </section>
 
@@ -15,12 +15,24 @@
       <dl><div><dt>Created</dt><dd>{{ selected_schedule.created_at|date:'M j, Y · H:i'|default:'—' }}</dd></div><div><dt>Approval</dt><dd>{% if selected_schedule.approved %}Approved{% else %}Not final{% endif %}</dd></div></dl>
     </section>
 
-    <section class="panel"><div class="panel__header panel__header--tools"><div><p class="eyebrow">Version workflow</p><h2>Validate, review, approve, or export</h2><p class="muted">Only a zero-violation version with the required college endorsements can receive final approval.</p></div><div class="page-actions"><button class="button button--secondary" type="button" data-print-schedule>Print weekly view</button>{% if selected_schedule.approved %}<a class="button button--secondary" href="{% url 'api:schedule-export' selected_schedule.id 'csv' %}">Export CSV</a><a class="button button--secondary" href="{% url 'api:schedule-export' selected_schedule.id 'xlsx' %}">Export XLSX</a>{% else %}<span class="tag">Data export after approval</span>{% endif %}</div></div>
-      {% if is_central %}<div class="decision-actions">{% if selected_schedule.status_value != 'APPROVED' and selected_schedule.status_value != 'ARCHIVED' %}<form action="{% url 'api:schedule-validate' selected_schedule.id %}" method="post" data-api-form>{% csrf_token %}<button class="button button--compact button--secondary" type="submit">Validate independently</button></form>{% endif %}{% if selected_schedule.status_value == 'DRAFT' %}<form action="{% url 'api:schedule-submit-review' selected_schedule.id %}" method="post" data-api-form>{% csrf_token %}<button class="button button--compact button--primary" type="submit" data-confirm="Submit this zero-violation schedule for college review?">Submit for review</button></form>{% elif selected_schedule.status_value == 'UNDER_REVIEW' %}<form action="{% url 'api:schedule-approve' selected_schedule.id %}" method="post" data-api-form>{% csrf_token %}<input type="hidden" name="notes" value="Approved after required college endorsements"><button class="button button--compact button--primary" type="submit" data-confirm="Approve this schedule as the active term version?">Approve schedule</button></form>{% endif %}{% if selected_schedule.status_value == 'UNDER_REVIEW' or selected_schedule.status_value == 'APPROVED' %}<form action="{% url 'api:schedule-regenerate' selected_schedule.id %}" method="post" data-api-form data-success-url="{% url 'scheduler:runs' %}">{% csrf_token %}<input type="hidden" name="algorithm" value="CP_SAT"><input type="hidden" name="seed" value="0"><input type="hidden" name="time_limit_seconds" value="300"><button class="button button--compact button--secondary" type="submit" data-confirm="Create a child schedule using all currently active locks?">Regenerate child</button></form>{% endif %}</div>{% endif %}
+    <section class="panel schedule-actions" aria-labelledby="schedule-next-action">
+      <div><p class="eyebrow">Next action</p>
+        {% if selected_schedule.status_value == 'DRAFT' %}<h2 id="schedule-next-action">Send this timetable for review</h2><p>Submitting checks the timetable for rule violations before colleges can review it.</p>
+        {% elif selected_schedule.status_value == 'UNDER_REVIEW' %}<h2 id="schedule-next-action">Complete the college review</h2><p>Check the Reviews page before approving the final timetable.</p>
+        {% elif selected_schedule.status_value == 'APPROVED' %}<h2 id="schedule-next-action">This timetable is approved</h2><p>It is now read-only and available for authorized export.</p>
+        {% else %}<h2 id="schedule-next-action">This timetable is archived</h2><p>Archived versions remain available for reference.</p>{% endif %}
+      </div>
+      <div class="schedule-actions__buttons">
+        {% if is_central and selected_schedule.status_value == 'DRAFT' %}<form action="{% url 'api:schedule-submit-review' selected_schedule.id %}" method="post" data-api-form>{% csrf_token %}<button class="button button--primary" type="submit" data-confirm="Check this timetable and send it to college reviewers?">Check and send for review</button></form>
+        {% elif is_central and selected_schedule.status_value == 'UNDER_REVIEW' %}<a class="button button--secondary" href="{% url 'scheduler:reviews' %}">Check review decisions</a><form action="{% url 'api:schedule-approve' selected_schedule.id %}" method="post" data-api-form>{% csrf_token %}<input type="hidden" name="notes" value="Approved after required college endorsements"><button class="button button--primary" type="submit" data-confirm="Approve this schedule as the final active timetable?">Approve final timetable</button></form>
+        {% elif selected_schedule.approved %}<a class="button button--primary" href="{% url 'api:schedule-export' selected_schedule.id 'xlsx' %}">Download Excel</a><a class="button button--secondary" href="{% url 'api:schedule-export' selected_schedule.id 'csv' %}">Download CSV</a>{% endif %}
+        <button class="button button--secondary" type="button" data-print-schedule>Print timetable</button>
+      </div>
+      {% if is_central and selected_schedule.status_value == 'UNDER_REVIEW' or is_central and selected_schedule.status_value == 'APPROVED' %}<details class="explanation schedule-actions__more"><summary>More actions</summary><form action="{% url 'api:schedule-regenerate' selected_schedule.id %}" method="post" data-api-form data-success-url="{% url 'scheduler:runs' %}">{% csrf_token %}<input type="hidden" name="algorithm" value="CP_SAT"><input type="hidden" name="seed" value="0"><input type="hidden" name="time_limit_seconds" value="300"><button class="text-button" type="submit" data-confirm="Create a new child schedule using all active locks?">Regenerate using locked classes</button></form></details>{% endif %}
     </section>
 
     <section class="panel" aria-labelledby="weekly-timetable-title">
-      <div class="panel__header"><div><p class="eyebrow">Weekly view</p><h2 id="weekly-timetable-title">Class schedule by day</h2><p class="muted">Times use the configured local campus schedule. Scroll horizontally to inspect every teaching day.</p></div><button class="button button--secondary button--compact" type="button" data-print-schedule>Print</button></div>
+      <div class="panel__header"><div><p class="eyebrow">Weekly view</p><h2 id="weekly-timetable-title">Classes by day</h2><p class="muted">Review each teaching day below. Use the detailed list to search for a subject, instructor, or room.</p></div></div>
       {% if assignments and timetable_days %}
         <div class="week-board" role="list" aria-label="Weekly class schedule">
           {% for day in timetable_days %}
@@ -46,7 +58,7 @@
     </section>
 
     {% if assignments %}<details class="panel list-view" aria-labelledby="timetable-title">
-      <summary id="timetable-title">Detailed assignment list and lock controls</summary>
+      <summary id="timetable-title">Search the detailed assignment list</summary>
       <div class="panel__header panel__header--tools"><div><p class="eyebrow">Accessible list view</p><h2>All timetable assignments</h2></div><div class="field field--search"><label class="visually-hidden" for="schedule-search">Search timetable</label><input id="schedule-search" type="search" placeholder="Search subject, section, instructor, room…" data-table-search="timetable-table" aria-controls="timetable-table"><p class="visually-hidden" data-table-search-status aria-live="polite"></p></div></div>
       {% if is_central and selected_schedule.status_value != 'DRAFT' %}<form action="{% url 'api:schedule-lock' selected_schedule.id %}" method="post" data-api-form>{% csrf_token %}<input type="hidden" name="reason" value="Accepted during schedule review">{% endif %}<div class="table-wrap"><table id="timetable-table"><caption class="visually-hidden">Detailed assignments for schedule version {{ selected_schedule.version }}</caption><thead><tr><th scope="col">Day and time</th><th scope="col">Subject</th><th scope="col">Section</th><th scope="col">Instructor</th><th scope="col">Room</th><th scope="col">College</th><th scope="col">Control</th></tr></thead><tbody>
       {% for item in assignments %}<tr><td><strong>{{ item.day }}</strong><small class="cell-note">{{ item.starts_at|time:'H:i'|default:item.starts_at }}{% if item.ends_at %}–{{ item.ends_at|time:'H:i'|default:item.ends_at }}{% endif %}</small></td><td><strong>{{ item.subject_code }}</strong><small class="cell-note">{{ item.subject_name }}</small></td><td>{{ item.section }}</td><td>{{ item.instructor }}</td><td><strong>{{ item.room }}</strong></td><td>{{ item.college }}</td><td>{% if item.locked %}<span class="status status--locked">Locked</span>{% elif is_central and selected_schedule.status_value != 'DRAFT' %}<label class="check-field"><input type="checkbox" name="assignment_ids" value="{{ item.id }}"><span>Carry forward</span></label>{% else %}<span class="muted">Flexible</span>{% endif %}</td></tr>{% endfor %}
@@ -54,6 +66,6 @@
     </details>{% endif %}
   {% endif %}
 {% else %}
-  <section class="empty-state empty-state--prominent"><span class="empty-state__icon" aria-hidden="true">▦</span><div><h2>No timetable versions</h2><p>A feasible, independently validated solver result must be promoted before it appears here.</p></div><a class="button button--primary" href="{% url 'scheduler:runs' %}">Open schedule runs</a></section>
+  <section class="empty-state empty-state--prominent"><span class="empty-state__icon" aria-hidden="true">▦</span><div><h2>No timetables yet</h2><p>Generate a valid schedule before checking or sending it for review.</p></div>{% if is_central %}<a class="button button--primary" href="{% url 'scheduler:runs' %}">Generate a schedule</a>{% endif %}</section>
 {% endif %}
 {% endblock %}

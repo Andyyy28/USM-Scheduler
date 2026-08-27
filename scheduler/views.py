@@ -219,6 +219,7 @@ def _run_view(run: Any) -> SimpleNamespace:
         problem_hash=_run_metric(run, "problem_hash", "snapshot.snapshot_hash", default=""),
         config_hash=_run_metric(run, "config_hash", default=""),
         can_cancel=_first(run, "status", default="") in {"QUEUED", "RUNNING"},
+        schedule_id=str(_first(run, "schedule_version.pk", default="")),
     )
 
 
@@ -400,6 +401,57 @@ def _assignment_view(assignment: Any) -> SimpleNamespace:
     )
 
 
+def _workflow_steps(
+    *,
+    has_term: bool,
+    has_import: bool,
+    has_prepared_data: bool,
+    has_checked_data: bool,
+    has_run: bool,
+    has_successful_run: bool,
+    has_timetable: bool,
+    has_review: bool,
+    has_approval: bool,
+) -> tuple[list[SimpleNamespace], SimpleNamespace]:
+    """Build plain-language progress for the active scheduling term."""
+
+    def state(complete: bool, in_progress: bool, ready: bool) -> tuple[str, str]:
+        if complete:
+            return "Complete", "complete"
+        if in_progress:
+            return "In progress", "in-progress"
+        if ready:
+            return "Ready", "ready"
+        return "Not started", "not-started"
+
+    term_state = state(has_term, False, False)
+    data_state = state(has_prepared_data, has_import, has_term)
+    generate_state = state(has_successful_run, has_checked_data or has_run, has_prepared_data)
+    timetable_state = state(has_timetable, False, has_successful_run)
+    review_state = state(has_approval, has_review, has_timetable)
+    definitions = (
+        (1, "Set up the academic term", "Confirm the semester, campus, dates, and teaching days.", term_state, "scheduler:terms", "Review academic term" if has_term else "Set up academic term"),
+        (2, "Prepare scheduling data", "Upload the semester workbook, check errors, and save a clean version.", data_state, "scheduler:imports", "Review prepared data" if has_prepared_data else "Prepare scheduling data"),
+        (3, "Generate a schedule", "Check the prepared data, then let the system build a candidate timetable.", generate_state, "scheduler:runs", "View schedule runs" if has_successful_run else "Generate a schedule"),
+        (4, "Check the timetable", "Inspect classes, instructors, rooms, and conflicts before review.", timetable_state, "scheduler:schedules", "Open timetables"),
+        (5, "Review and approve", "Collect college decisions and approve the final schedule.", review_state, "scheduler:reviews", "Open review queue"),
+    )
+    steps = [
+        SimpleNamespace(
+            number=number,
+            title=title,
+            description=description,
+            state=step_state[0],
+            state_class=step_state[1],
+            url_name=url_name,
+            action=action,
+        )
+        for number, title, description, step_state, url_name, action in definitions
+    ]
+    next_step = next((step for step in steps if step.state != "Complete"), steps[-1])
+    return steps, next_step
+
+
 def _render(request: HttpRequest, template: str, *, section: str, title: str, **context: Any) -> HttpResponse:
     is_central = bool(
         request.user.is_authenticated
@@ -428,15 +480,46 @@ def healthz(request: HttpRequest) -> JsonResponse:
 @login_required
 @require_GET
 def dashboard(request: HttpRequest) -> HttpResponse:
-    terms = [_term_view(term) for term in _safe_list("AcademicTerm", limit=12)]
-    active_term = next((term for term in terms if term.status.lower() == "active"), terms[0] if terms else None)
-    recent_runs = [_run_view(run) for run in _safe_list("ScheduleRun", limit=6)]
+    term_records = _safe_list("AcademicTerm", limit=12)
+    active_term_record = next(
+        (term for term in term_records if _first(term, "status", default="") == "ACTIVE"),
+        term_records[0] if term_records else None,
+    )
+    active_term = _term_view(active_term_record) if active_term_record is not None else None
+    term_id = _first(active_term_record, "pk", "id")
+    run_filters = {"snapshot__revision__term_id": term_id} if term_id else None
+    schedule_filters = {"term_id": term_id} if term_id else None
+    import_filters = {"term_id": term_id} if term_id else None
+    revision_filters = {"term_id": term_id, "status": "COMMITTED"} if term_id else {"status": "COMMITTED"}
+    snapshot_filters = {"revision__term_id": term_id} if term_id else None
+    run_records = _safe_list("ScheduleRun", limit=25, filters=run_filters)
+    recent_runs = [_run_view(run) for run in run_records[:6]]
     reviews = [_review_view(review) for review in _safe_list("ScheduleReview", limit=100)]
     central = request.user.is_active and (
         request.user.is_superuser
         or getattr(request.user, "role", "") in {"SYSTEM_ADMIN", "CENTRAL_SCHEDULER"}
     )
-    imports = [_import_view(batch) for batch in _safe_list("ImportBatch", limit=1)] if central else []
+    imports = [_import_view(batch) for batch in _safe_list("ImportBatch", limit=1, filters=import_filters)] if central else []
+    committed_revisions = _safe_list("TermDatasetRevision", limit=1, filters=revision_filters)
+    snapshots = _safe_list("ProblemSnapshot", limit=1, filters=snapshot_filters)
+    schedules = [_schedule_view(item) for item in _safe_list("ScheduleVersion", limit=25, filters=schedule_filters)]
+    has_successful_run = any(
+        _first(run, "status", default="") in {"FEASIBLE", "OPTIMAL"} for run in run_records
+    )
+    has_approved_schedule = any(schedule.status_value == "APPROVED" for schedule in schedules)
+    has_review_schedule = any(schedule.status_value == "UNDER_REVIEW" for schedule in schedules)
+
+    workflow, next_step = _workflow_steps(
+        has_term=bool(active_term),
+        has_import=bool(imports),
+        has_prepared_data=bool(committed_revisions),
+        has_checked_data=bool(snapshots),
+        has_run=bool(run_records),
+        has_successful_run=has_successful_run,
+        has_timetable=bool(schedules),
+        has_review=has_review_schedule,
+        has_approval=has_approved_schedule,
+    )
     return _render(
         request,
         "scheduler/dashboard.html",
@@ -445,6 +528,8 @@ def dashboard(request: HttpRequest) -> HttpResponse:
         active_term=active_term,
         recent_runs=recent_runs,
         latest_import=imports[0] if imports else None,
+        workflow=workflow,
+        next_step=next_step,
         counts={
             "terms": _safe_count("AcademicTerm"),
             "offerings": _safe_count("CourseOffering"),
@@ -497,7 +582,6 @@ def runs(request: HttpRequest) -> HttpResponse:
         filters={"status": "COMMITTED"},
     )
     objectives = _safe_list("ObjectiveProfile", limit=100, filters={"is_approved": True})
-    experiments = [_experiment_view(item) for item in _safe_list("ExperimentBatch", limit=100)]
     algorithm = request.GET.get("algorithm", "").strip().lower()
     status = request.GET.get("status", "").strip().lower()
     if algorithm:
@@ -513,9 +597,25 @@ def runs(request: HttpRequest) -> HttpResponse:
         snapshots=snapshots,
         revisions=revisions,
         objective_profiles=objectives,
-        experiments=experiments,
         selected_algorithm=algorithm,
         selected_status=status,
+    )
+
+
+@login_required
+@require_GET
+def research_tools(request: HttpRequest) -> HttpResponse:
+    """Keep thesis evaluation tools available without crowding routine scheduling."""
+
+    snapshots = [_snapshot_view(item) for item in _safe_list("ProblemSnapshot", limit=100)]
+    experiments = [_experiment_view(item) for item in _safe_list("ExperimentBatch", limit=100)]
+    return _render(
+        request,
+        "scheduler/research.html",
+        section="research",
+        title="Research tools",
+        snapshots=snapshots,
+        experiments=experiments,
     )
 
 
@@ -559,7 +659,7 @@ def run_comparison(request: HttpRequest) -> HttpResponse:
     return _render(
         request,
         "scheduler/run_comparison.html",
-        section="runs",
+        section="research",
         title="Compare algorithm runs",
         run_options=options,
         left=left,
@@ -585,7 +685,7 @@ def experiment_detail(request: HttpRequest, pk: str) -> HttpResponse:
     return _render(
         request,
         "scheduler/experiment_detail.html",
-        section="runs",
+        section="research",
         title=f"Experiment {pk}",
         batch=batch,
         summary=summary,

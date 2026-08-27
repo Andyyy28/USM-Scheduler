@@ -1,16 +1,40 @@
 {% extends 'scheduler/base.html' %}
 
 {% block content %}
-<header class="page-header"><div><p class="eyebrow">Human oversight</p><h1>Schedule review</h1><p>College reviewers verify assignments before an authorized university approver publishes a schedule.</p></div><a class="button button--secondary" href="{% url 'scheduler:schedules' %}">View timetables</a></header>
+<header class="page-header">
+  <div><p class="eyebrow">Reviews</p><h1>Review college schedules</h1><p>Check the timetable first, then endorse it or clearly explain the changes needed.</p></div>
+  <div class="page-actions"><a class="button button--secondary" href="{% url 'scheduler:help' %}#review">How reviews work</a><a class="button button--secondary" href="{% url 'scheduler:schedules' %}">View timetables</a></div>
+</header>
 
-<section class="callout callout--info"><div><strong>Approval is not automatic.</strong><p>A solver status of feasible or optimal means the encoded constraints passed. Reviewers still confirm institutional correctness, data completeness, and policy exceptions.</p></div></section>
+<section class="review-guidance" aria-label="Review checklist">
+  <strong>Before recording a decision:</strong>
+  <span>Check subjects and sections</span><span>Check instructors</span><span>Check rooms and times</span><span>Explain requested changes</span>
+</section>
 
 <section class="panel" aria-labelledby="review-queue-title">
-  <div class="panel__header panel__header--tools"><div><p class="eyebrow">College sign-off</p><h2 id="review-queue-title">Review queue</h2></div><div class="field field--search"><label class="visually-hidden" for="review-search">Search reviews</label><input id="review-search" type="search" placeholder="Search college or reviewer" data-table-search="review-table"></div></div>
+  <div class="panel__header"><div><p class="eyebrow">Waiting for action</p><h2 id="review-queue-title">Review queue</h2><p class="muted">Only schedules and colleges within your assigned role are shown.</p></div></div>
   {% if reviews %}
-    <div class="table-wrap"><table id="review-table"><thead><tr><th scope="col">Schedule</th><th scope="col">College / unit</th><th scope="col">Reviewer</th><th scope="col">Status</th><th scope="col">Comment</th><th scope="col">Updated</th><th scope="col">Decision</th></tr></thead><tbody>
-      {% for review in reviews %}<tr><td>{% if review.schedule_id %}<a class="table-link" href="{% url 'scheduler:schedules' %}?schedule={{ review.schedule_id|urlencode }}">{{ review.schedule }}</a>{% else %}{{ review.schedule }}{% endif %}</td><td><strong>{{ review.college }}</strong></td><td>{{ review.reviewer }}</td><td><span class="status status--{{ review.status_class }}">{{ review.status }}</span></td><td>{{ review.comment|default:'—'|truncatechars:64 }}</td><td>{{ review.updated_at|date:'M j, Y · H:i'|default:'—' }}</td><td>{% if review.actionable and review.schedule_id and review.college_id %}<details class="decision-menu"><summary>Record decision</summary><form action="{% url 'api:schedule-review' review.schedule_id %}" method="post" data-api-form>{% csrf_token %}<input type="hidden" name="college_id" value="{{ review.college_id }}"><div class="field"><label for="review-status-{{ review.id }}">Decision</label><select id="review-status-{{ review.id }}" name="status" required><option value="ENDORSED">Endorse</option><option value="CHANGES_REQUESTED">Request changes</option></select></div><div class="field"><label for="review-comment-{{ review.id }}">Comment</label><textarea id="review-comment-{{ review.id }}" name="comment" rows="3" required></textarea></div><p class="form-status" data-form-status aria-live="polite"></p><button class="button button--compact button--primary" type="submit">Save decision</button></form></details>{% else %}<span class="muted">Recorded</span>{% endif %}</td></tr>{% endfor %}
-    </tbody></table></div><p class="table-empty" data-table-empty hidden>No reviews match that search.</p>
-  {% else %}<div class="empty-state empty-state--prominent"><span class="empty-state__icon" aria-hidden="true">✓</span><div><h3>No schedules awaiting review</h3><p>Promote an independently validated candidate timetable to begin the review workflow.</p></div></div>{% endif %}
+    <div class="review-list">
+      {% for review in reviews %}
+      <article class="review-card">
+        <div class="review-card__main">
+          <div class="review-card__heading"><div><p class="eyebrow">{{ review.college }}</p><h3>{% if review.schedule_id %}<a href="{% url 'scheduler:schedules' %}?schedule={{ review.schedule_id|urlencode }}">{{ review.schedule }}</a>{% else %}{{ review.schedule }}{% endif %}</h3></div><span class="status status--{{ review.status_class }}">{{ review.status }}</span></div>
+          <dl class="review-card__meta"><div><dt>Reviewer</dt><dd>{{ review.reviewer }}</dd></div><div><dt>Last updated</dt><dd>{{ review.updated_at|date:'M j, Y · H:i'|default:'—' }}</dd></div>{% if review.comment %}<div class="review-card__comment"><dt>Latest comment</dt><dd>{{ review.comment }}</dd></div>{% endif %}</dl>
+          {% if review.schedule_id %}<a class="table-link" href="{% url 'scheduler:schedules' %}?schedule={{ review.schedule_id|urlencode }}">Check this timetable first</a>{% endif %}
+        </div>
+        {% if review.actionable and review.schedule_id and review.college_id %}
+        <form class="review-form" action="{% url 'api:schedule-review' review.schedule_id %}" method="post" data-api-form>
+          {% csrf_token %}<input type="hidden" name="college_id" value="{{ review.college_id }}">
+          <div class="field"><label for="review-status-{{ review.id }}">Your decision</label><select id="review-status-{{ review.id }}" name="status" required><option value="">Choose a decision</option><option value="ENDORSED">Endorse this schedule</option><option value="CHANGES_REQUESTED">Request changes</option></select></div>
+          <div class="field"><label for="review-comment-{{ review.id }}">Comment</label><textarea id="review-comment-{{ review.id }}" name="comment" rows="3" required placeholder="Confirm what you checked or explain the changes needed"></textarea><small>A clear comment is required for the review record.</small></div>
+          <p class="form-status" data-form-status aria-live="polite"></p><button class="button button--primary" type="submit">Save review decision</button>
+        </form>
+        {% else %}<div class="review-card__recorded"><strong>Decision recorded</strong><p>This item has no further action for your account.</p></div>{% endif %}
+      </article>
+      {% endfor %}
+    </div>
+  {% else %}
+    <div class="empty-state empty-state--prominent"><span class="empty-state__icon" aria-hidden="true">✓</span><div><h3>No schedules are waiting for review</h3><p>New items will appear here after the central scheduler sends a timetable to colleges.</p></div></div>
+  {% endif %}
 </section>
 {% endblock %}

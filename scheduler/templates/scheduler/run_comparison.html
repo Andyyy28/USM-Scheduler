@@ -1,7 +1,7 @@
 {% extends 'scheduler/base.html' %}
 
 {% block content %}
-<header class="page-header"><div><p class="eyebrow">Controlled evaluation</p><h1>Compare algorithm runs</h1><p>Use runs from the same frozen problem instance and inspect feasibility before runtime or quality.</p></div><a class="button button--secondary" href="{% url 'scheduler:runs' %}">Run history</a></header>
+<header class="page-header"><div><p class="eyebrow">Controlled evaluation</p><h1>Compare algorithm runs</h1><p>Use runs from the same checked dataset and inspect feasibility before runtime or quality.</p></div><a class="button button--secondary" href="{% url 'scheduler:research' %}">Back to Research tools</a></header>
 
 <section class="panel form-panel" aria-labelledby="comparison-picker-title">
   <div class="panel__header"><div><p class="eyebrow">Pair selection</p><h2 id="comparison-picker-title">Choose two recorded runs</h2></div></div>

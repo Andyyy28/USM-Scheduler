@@ -1,105 +1,62 @@
 {% extends 'scheduler/base.html' %}
 
 {% block content %}
-<header class="page-header">
+<header class="page-header page-header--compact">
   <div>
-    <p class="eyebrow">Scheduling overview</p>
-    <h1>Welcome, {{ request.user.get_short_name|default:request.user.username }}.</h1>
-    {% if is_central %}
-      <p>Prepare semester data, generate candidate timetables, and move validated schedules through review and approval.</p>
-    {% else %}
-      <p>Inspect university timetables and complete the schedule reviews assigned to your academic unit.</p>
-    {% endif %}
-  </div>
-  <div class="page-actions">
-    {% if is_central %}
-      <a class="button button--secondary" href="{% url 'scheduler:imports' %}">Prepare semester data</a>
-      <a class="button button--primary" href="{% url 'scheduler:runs' %}#new-run">Generate a schedule</a>
-    {% else %}
-      <a class="button button--secondary" href="{% url 'scheduler:schedules' %}">View timetables</a>
-      <a class="button button--primary" href="{% url 'scheduler:reviews' %}">Open review queue</a>
-    {% endif %}
+    <p class="eyebrow">Home</p>
+    <h1>Good day, {{ request.user.get_short_name|default:request.user.username }}.</h1>
+    <p>{% if is_central %}Follow the steps below to prepare and approve this semester's timetable.{% else %}View the current timetable and complete reviews assigned to your college.{% endif %}</p>
   </div>
 </header>
 
-<section class="callout callout--info" aria-label="Role guidance">
-  <div>
-    {% if is_central %}
-      <strong>Central scheduling workspace</strong>
-      <p>Begin with a validated semester workbook. Candidate schedules remain drafts until independent validation, college review, and authorized approval are complete.</p>
-    {% else %}
-      <strong>College review workspace</strong>
-      <p>Check subjects, instructors, rooms, and unit policies before endorsing. An algorithm result never replaces academic review.</p>
-    {% endif %}
-  </div>
+{% if is_central %}
+<section class="next-action" aria-labelledby="next-action-title">
+  <div><p class="eyebrow">Recommended next step</p><h2 id="next-action-title">{{ next_step.title }}</h2><p>{{ next_step.description }}</p></div>
+  <a class="button button--light" href="{% url next_step.url_name %}">{{ next_step.action }}</a>
 </section>
-
-{% if active_term %}
-  <section class="term-banner" aria-labelledby="active-term-title">
-    <div>
-      <span class="status status--{{ active_term.status_class }}">{{ active_term.status }}</span>
-      <p class="eyebrow">Current scheduling term</p>
-      <h2 id="active-term-title">{{ active_term.academic_year }} · {{ active_term.semester }}</h2>
-      <p>{{ active_term.campus }}</p>
-    </div>
-    <a class="button button--light" href="{% url 'scheduler:terms' %}">Review term data</a>
-  </section>
 {% else %}
-  <section class="empty-state empty-state--prominent">
-    <span class="empty-state__icon" aria-hidden="true">◇</span>
-    <div><h2>Create the first academic term</h2><p>Define the semester before importing offerings, availability, and fixed assignments.</p></div>
-    {% if request.user.is_staff %}<a class="button button--primary" href="{% url 'admin:index' %}">Open administration</a>{% endif %}
-  </section>
+<section class="next-action" aria-labelledby="next-action-title">
+  <div><p class="eyebrow">Your workspace</p><h2 id="next-action-title">Review the current schedule</h2><p>Check your college's classes and record your decision when a schedule is ready.</p></div>
+  <a class="button button--light" href="{% url 'scheduler:reviews' %}">Open review queue</a>
+</section>
 {% endif %}
 
-<section class="metric-grid" aria-label="Data readiness summary">
-  <article class="metric-card"><span>Course offerings</span><strong>{{ counts.offerings }}</strong><small>Across loaded term data</small></article>
-  <article class="metric-card"><span>Rooms and laboratories</span><strong>{{ counts.rooms }}</strong><small>Availability validated separately</small></article>
-  <article class="metric-card"><span>Instructors</span><strong>{{ counts.instructors }}</strong><small>Faculty records in the system</small></article>
-  <article class="metric-card"><span>Pending reviews</span><strong>{{ counts.pending_reviews }}</strong><small>Awaiting authorized action</small></article>
+{% if active_term %}
+<section class="current-term" aria-labelledby="active-term-title">
+  <div><span class="status status--{{ active_term.status_class }}">{{ active_term.status }}</span><span><strong id="active-term-title">{{ active_term.academic_year }} · {{ active_term.semester }}</strong><small>{{ active_term.campus }}</small></span></div>
+  <a href="{% url 'scheduler:terms' %}">View term details</a>
+</section>
+{% endif %}
+
+{% if is_central %}
+<section class="panel workflow-panel" aria-labelledby="workflow-title">
+  <div class="panel__header"><div><p class="eyebrow">Scheduling progress</p><h2 id="workflow-title">Five steps to an approved timetable</h2><p class="muted">Complete each step in order. You can return to a completed step at any time.</p></div></div>
+  <ol class="workflow-checklist">
+    {% for step in workflow %}
+    <li class="workflow-checklist__item workflow-checklist__item--{{ step.state_class }}">
+      <span class="workflow-checklist__number" aria-hidden="true">{% if step.state == 'Complete' %}✓{% else %}{{ step.number }}{% endif %}</span>
+      <div><h3>{{ step.title }}</h3><p>{{ step.description }}</p></div>
+      <span class="workflow-state workflow-state--{{ step.state_class }}">{{ step.state }}</span>
+      <a class="button button--compact {% if step.number == next_step.number %}button--primary{% else %}button--secondary{% endif %}" href="{% url step.url_name %}">{{ step.action }}</a>
+    </li>
+    {% endfor %}
+  </ol>
+</section>
+{% endif %}
+
+<section class="metric-grid metric-grid--quiet" aria-label="System summary">
+  <article class="metric-card"><span>Course offerings</span><strong>{{ counts.offerings }}</strong></article>
+  <article class="metric-card"><span>Rooms and laboratories</span><strong>{{ counts.rooms }}</strong></article>
+  <article class="metric-card"><span>Instructors</span><strong>{{ counts.instructors }}</strong></article>
+  <article class="metric-card"><span>Reviews waiting</span><strong>{{ counts.pending_reviews }}</strong></article>
 </section>
 
-<div class="content-grid content-grid--wide">
-  <section class="panel" aria-labelledby="recent-runs-title">
-    <div class="panel__header">
-      <div><p class="eyebrow">Optimization</p><h2 id="recent-runs-title">Recent schedule runs</h2></div>
-      <a href="{% url 'scheduler:runs' %}">View all</a>
-    </div>
-    {% if recent_runs %}
-      <div class="table-wrap">
-        <table>
-          <caption class="visually-hidden">Recent schedule optimization runs</caption>
-          <thead><tr><th scope="col">Algorithm</th><th scope="col">Status</th><th scope="col">Runtime</th><th scope="col">Created</th><th scope="col"><span class="visually-hidden">Open</span></th></tr></thead>
-          <tbody>
-          {% for run in recent_runs %}
-            <tr>
-              <td><strong>{{ run.algorithm }}</strong><small class="cell-note">Seed {{ run.seed }}</small></td>
-              <td><span class="status status--{{ run.status_class }}">{{ run.status }}</span></td>
-              <td>{{ run.runtime }}</td>
-              <td>{{ run.created_at|date:'M j, Y · H:i'|default:'—' }}</td>
-              <td><a class="table-link" href="{% url 'scheduler:run-detail' run.id %}">Details<span class="visually-hidden"> for run {{ run.id }}</span></a></td>
-            </tr>
-          {% endfor %}
-          </tbody>
-        </table>
-      </div>
-    {% else %}
-      <div class="empty-state"><span class="empty-state__icon" aria-hidden="true">▶</span><div><h3>No schedule runs yet</h3><p>{% if is_central %}Prepare a validated semester dataset, then generate the first candidate timetable.{% else %}The central scheduling team has not published any recorded runs yet.{% endif %}</p></div></div>
-    {% endif %}
-  </section>
-
-  <aside class="panel" aria-labelledby="workflow-title">
-    <div class="panel__header"><div><p class="eyebrow">Controlled workflow</p><h2 id="workflow-title">From data to approval</h2></div></div>
-    <ol class="workflow-list">
-      <li><span>1</span><div><strong>Prepare</strong><p>Import and validate authorized semester records.</p></div></li>
-      <li><span>2</span><div><strong>Generate</strong><p>Create candidate schedules from one frozen dataset.</p></div></li>
-      <li><span>3</span><div><strong>Verify</strong><p>Confirm zero hard-rule violations and inspect quality.</p></div></li>
-      <li><span>4</span><div><strong>Review and approve</strong><p>Collect college endorsements before final publication.</p></div></li>
-    </ol>
-    {% if latest_import %}
-      <div class="inline-note"><strong>Latest import:</strong> {{ latest_import.filename }} <span class="status status--{{ latest_import.status_class }}">{{ latest_import.status }}</span></div>
-    {% endif %}
-    <div class="inline-note"><a href="{% url 'scheduler:help' %}">Open the step-by-step user guide</a></div>
-  </aside>
-</div>
+<section class="panel" aria-labelledby="recent-runs-title">
+  <div class="panel__header"><div><p class="eyebrow">Recent activity</p><h2 id="recent-runs-title">Latest schedule runs</h2></div><a href="{% url 'scheduler:runs' %}">View all runs</a></div>
+  {% if recent_runs %}
+    <div class="table-wrap"><table><caption class="visually-hidden">Latest schedule runs</caption><thead><tr><th scope="col">Method</th><th scope="col">Status</th><th scope="col">Runtime</th><th scope="col">Created</th><th scope="col"><span class="visually-hidden">Open</span></th></tr></thead><tbody>{% for run in recent_runs %}<tr><td><strong>{{ run.algorithm }}</strong></td><td><span class="status status--{{ run.status_class }}">{{ run.status }}</span></td><td>{{ run.runtime }}</td><td>{{ run.created_at|date:'M j, Y · H:i'|default:'—' }}</td><td><a class="table-link" href="{% url 'scheduler:run-detail' run.id %}">Details</a></td></tr>{% endfor %}</tbody></table></div>
+  {% else %}
+    <div class="empty-state"><div><h3>No schedule runs yet</h3><p>{% if is_central %}Complete the preparation steps above, then generate your first schedule.{% else %}No schedule results are available yet.{% endif %}</p></div></div>
+  {% endif %}
+</section>
 {% endblock %}

@@ -1,0 +1,37 @@
+{% extends 'scheduler/base.html' %}
+
+{% block content %}
+<header class="page-header">
+  <div><p class="eyebrow">Advanced</p><h1>Research tools</h1><p>Run controlled algorithm comparisons and inspect reproducibility evidence for the thesis evaluation.</p></div>
+  <div class="page-actions"><a class="button button--secondary" href="{% url 'scheduler:runs' %}">Routine schedule generation</a><a class="button button--secondary" href="{% url 'scheduler:run-comparison' %}">Compare two runs</a></div>
+</header>
+
+<section class="callout callout--warning"><div><strong>These tools are not required for normal scheduling.</strong><p>Use them only for formal CP-SAT and Genetic Algorithm evaluation. They can create many sequential solver runs.</p></div></section>
+
+{% if is_central %}
+<section class="panel form-panel" id="new-experiment" aria-labelledby="new-experiment-title">
+  <div class="panel__header"><div><p class="eyebrow">Controlled study</p><h2 id="new-experiment-title">Create the 30-seed algorithm comparison</h2><p class="muted">This creates 60 measured runs—one CP-SAT and one Genetic Algorithm run for each seed.</p></div><span class="tag">Advanced</span></div>
+  <form class="form-grid" action="{% url 'api:experiments' %}" method="post" data-api-form data-success-url="{% url 'scheduler:research' %}">
+    {% csrf_token %}
+    <div class="field"><label for="experiment-snapshot">Checked dataset</label><select id="experiment-snapshot" name="snapshot_id" required><option value="">Choose checked data</option>{% for snapshot in snapshots %}<option value="{{ snapshot.id }}">{{ snapshot.term }} · {{ snapshot.short_hash }}</option>{% endfor %}</select></div>
+    <div class="field"><label for="experiment-name">Experiment name</label><input id="experiment-name" name="name" type="text" placeholder="Full-term CP-SAT vs GA"></div>
+    <div class="field field--full"><label for="experiment-seeds">Fixed random seeds</label><textarea id="experiment-seeds" name="seeds" rows="3" required>1001,1002,1003,1004,1005,1006,1007,1008,1009,1010,1011,1012,1013,1014,1015,1016,1017,1018,1019,1020,1021,1022,1023,1024,1025,1026,1027,1028,1029,1030</textarea></div>
+    <div class="field"><label for="experiment-time">Time budget per run</label><input id="experiment-time" name="time_limit_seconds" type="number" min="1" value="300" required><small>Seconds for each measured trial.</small></div>
+    <input type="hidden" name="order_seed" value="20260824">
+    <div class="form-actions form-actions--full"><p class="form-status" data-form-status aria-live="polite"></p><button class="button button--primary" type="submit" {% if not snapshots %}disabled aria-disabled="true"{% endif %}>Create research batch</button></div>
+  </form>
+</section>
+{% endif %}
+
+<section class="panel" aria-labelledby="experiment-history-title">
+  <div class="panel__header"><div><p class="eyebrow">Research history</p><h2 id="experiment-history-title">Experiment batches</h2></div></div>
+  {% if experiments %}
+  <div class="table-wrap"><table><caption class="visually-hidden">Controlled algorithm experiment batches</caption><thead><tr><th scope="col">Batch</th><th scope="col">Status</th><th scope="col">Seeds / runs</th><th scope="col">Budget</th><th scope="col">Created</th><th scope="col">Actions</th></tr></thead><tbody>{% for batch in experiments %}<tr><td><strong>{{ batch.name }}</strong><small class="cell-note">{{ batch.snapshot|truncatechars:40 }}</small></td><td><span class="status status--{{ batch.status_class }}">{{ batch.status }}</span></td><td>{{ batch.seeds }} seeds · {{ batch.run_count }} runs</td><td>{{ batch.time_limit }} s each</td><td>{{ batch.created_at|date:'M j, Y · H:i'|default:'—' }}</td><td><div class="decision-actions"><a class="text-button" href="{% url 'scheduler:experiment-detail' batch.id %}">Report</a><a class="text-button" href="{% url 'api:experiment-export' batch.id 'csv' %}">CSV</a><a class="text-button" href="{% url 'api:experiment-export' batch.id 'json' %}">JSON</a>{% if batch.can_queue and is_central %}<form action="{% url 'api:experiment-queue' batch.id %}" method="post" data-api-form>{% csrf_token %}<button class="text-button text-button--success" type="submit" data-confirm="Queue all planned CP-SAT and GA trials sequentially?">Queue runs</button></form>{% endif %}</div></td></tr>{% endfor %}</tbody></table></div>
+  {% else %}<div class="empty-state"><div><h3>No research batches yet</h3><p>Create a batch after the dataset and quality policy are final.</p></div></div>{% endif %}
+</section>
+
+<section class="resource-grid resource-grid--two" aria-label="Research shortcuts">
+  <article class="resource-card"><h2>Compare recorded runs</h2><p>Inspect feasibility, runtime, and schedule quality side by side using the same checked dataset.</p><a class="table-link" href="{% url 'scheduler:run-comparison' %}">Open run comparison</a></article>
+  <article class="resource-card"><h2>Generate routine schedules</h2><p>Return to the staff workflow to check semester data and generate one candidate timetable.</p><a class="table-link" href="{% url 'scheduler:runs' %}">Open schedule generation</a></article>
+</section>
+{% endblock %}
