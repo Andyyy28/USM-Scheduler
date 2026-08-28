@@ -97,6 +97,7 @@ No participant outcome, completion time, quotation, or acceptance claim is fabri
 ## Defects and limitations
 
 - The focused automated cycle found no unresolved application UI, permission, overflow, browser-console, or automated WCAG A/AA defect. No additional broad visual changes were made.
+- The first PostgreSQL CI run identified five pre-existing experiment-test fixtures whose generated college codes exceeded the model's 20-character limit. SQLite had not enforced that length. The fixtures now use compact deterministic hashes; all 14 experiment tests pass locally, with no runtime model or migration change.
 - WebKit/Safari is outside the thesis browser target.
 - Automated axe results cover detectable rules only; the manual checks and participant study remain necessary.
 - Local SQLite evidence is supplemented by, not equivalent to, the dispatched Linux/PostgreSQL/Redis CI run.
