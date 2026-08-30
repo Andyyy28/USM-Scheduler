@@ -85,6 +85,13 @@ def _available_atom_ids_for_instructor(
 ) -> set[int]:
     if profile.assume_fully_available:
         return set(all_atom_ids)
+    prefetched_rows = getattr(profile, "prefetched_available_rows", None)
+    if prefetched_rows is not None:
+        return {
+            row.time_slot_id
+            for row in prefetched_rows
+            if row.is_available and row.time_slot_id in all_atom_ids
+        }
     return set(
         profile.availability_rows.filter(is_available=True, time_slot_id__in=all_atom_ids).values_list(
             "time_slot_id", flat=True
@@ -98,6 +105,13 @@ def _available_atom_ids_for_room(
 ) -> set[int]:
     if profile.assume_fully_available:
         return set(all_atom_ids)
+    prefetched_rows = getattr(profile, "prefetched_available_rows", None)
+    if prefetched_rows is not None:
+        return {
+            row.time_slot_id
+            for row in prefetched_rows
+            if row.is_available and row.time_slot_id in all_atom_ids
+        }
     return set(
         profile.availability_rows.filter(is_available=True, time_slot_id__in=all_atom_ids).values_list(
             "time_slot_id", flat=True
@@ -183,11 +197,28 @@ def build_problem(
 
     instructor_profiles = {
         profile.instructor_id: profile
-        for profile in revision.instructor_availability_profiles.select_related("instructor")
+        for profile in revision.instructor_availability_profiles.select_related("instructor").prefetch_related(
+            Prefetch(
+                "availability_rows",
+                queryset=models.InstructorAvailability.objects.filter(is_available=True),
+                to_attr="prefetched_available_rows",
+            ),
+            Prefetch(
+                "preferences",
+                queryset=models.InstructorPreference.objects.select_related("time_slot"),
+                to_attr="prefetched_preferences",
+            ),
+        )
     }
     room_profiles = {
         profile.room_id: profile
-        for profile in revision.room_availability_profiles.select_related("room")
+        for profile in revision.room_availability_profiles.select_related("room").prefetch_related(
+            Prefetch(
+                "availability_rows",
+                queryset=models.RoomAvailability.objects.filter(is_available=True),
+                to_attr="prefetched_available_rows",
+            )
+        )
     }
 
     meetings = list(
@@ -198,7 +229,7 @@ def build_problem(
         )
         .select_related("offering", "offering__offering_department", "offering__offering_department__college")
         .prefetch_related(
-            "required_capabilities",
+            Prefetch("required_capabilities", to_attr="prefetched_required_capabilities"),
             Prefetch(
                 "offering__section_links",
                 queryset=models.OfferingSection.objects.select_related(
@@ -207,10 +238,12 @@ def build_problem(
                     "program_subject__authoritative_college",
                     "program_subject__authoritative_department",
                 ),
+                to_attr="prefetched_section_links",
             ),
             Prefetch(
                 "offering__instructor_links",
                 queryset=models.OfferingInstructor.objects.select_related("instructor"),
+                to_attr="prefetched_instructor_links",
             ),
         )
         .order_by("stable_key")
@@ -221,17 +254,25 @@ def build_problem(
     rooms = list(
         models.Room.objects.filter(is_active=True, campus=revision.term.campus)
         .select_related("laboratory_profile")
-        .prefetch_related("capability_links", "authorizations")
+        .prefetch_related(
+            Prefetch("capability_links", to_attr="prefetched_capability_links"),
+            Prefetch(
+                "authorizations",
+                queryset=models.RoomAuthorization.objects.filter(revision=revision),
+                to_attr="prefetched_authorizations",
+            ),
+        )
         .order_by("code")
     )
     if not rooms:
         issues.append(BuildIssue("NO_ROOMS", "The term campus has no active rooms."))
 
     room_capability_ids = {
-        room.pk: set(room.capability_links.values_list("capability_id", flat=True)) for room in rooms
+        room.pk: {link.capability_id for link in room.prefetched_capability_links}
+        for room in rooms
     }
     room_authorizations = {
-        room.pk: list(room.authorizations.filter(revision=revision)) for room in rooms
+        room.pk: list(room.prefetched_authorizations) for room in rooms
     }
     room_available = {}
     for room in rooms:
@@ -253,7 +294,9 @@ def build_problem(
     preferred_ceiling: dict[int, int] = {}
     instructor_available: dict[int, set[int]] = {}
     relevant_instructor_ids = {
-        link.instructor_id for meeting in meetings for link in meeting.offering.instructor_links.all()
+        link.instructor_id
+        for meeting in meetings
+        for link in meeting.offering.prefetched_instructor_links
     }
     for instructor_id in relevant_instructor_ids:
         profile = instructor_profiles.get(instructor_id)
@@ -268,7 +311,7 @@ def build_problem(
             )
             continue
         instructor_available[instructor_id] = _available_atom_ids_for_instructor(profile, all_slot_ids)
-        for preference in profile.preferences.select_related("time_slot"):
+        for preference in profile.prefetched_preferences:
             if preference.level == models.PreferenceLevel.AVOID:
                 avoid_penalties[(instructor_id, preference.time_slot_id)] = preference.weight
             elif preference.level == models.PreferenceLevel.PREFERRED:
@@ -329,10 +372,21 @@ def build_problem(
         ).select_related("room", "start_time_slot")
     }
 
+    # Window construction depends only on the day and meeting duration.  Build
+    # each ordered sequence once, then reuse it for every room/event while
+    # retaining the legacy day/start ordering used by candidate generation.
+    windows_by_duration_day = {
+        duration: {
+            day: tuple(tuple(window) for window in _contiguous_windows(day_slots, duration))
+            for day, day_slots in slots_by_day.items()
+        }
+        for duration in {meeting.duration_atoms for meeting in meetings}
+    }
+
     for meeting in meetings:
         event_id = str(meeting.stable_key)
-        section_links = list(meeting.offering.section_links.all())
-        instructor_links = list(meeting.offering.instructor_links.all())
+        section_links = list(meeting.offering.prefetched_section_links)
+        instructor_links = list(meeting.offering.prefetched_instructor_links)
         if not section_links:
             issues.append(
                 BuildIssue("MEETING_WITHOUT_SECTION", f"{meeting} has no attached section.", "MeetingRequirement", event_id)
@@ -366,7 +420,9 @@ def build_problem(
                         str(link.instructor_id),
                     )
                 )
-        required_capabilities = set(meeting.required_capabilities.values_list("pk", flat=True))
+        required_capabilities = {
+            capability.pk for capability in meeting.prefetched_required_capabilities
+        }
         candidates: list[CandidatePlacement] = []
         meeting_lock = active_locks.get(meeting.pk)
 
@@ -385,8 +441,8 @@ def build_problem(
                 for link in section_links
             ):
                 continue
-            for day, day_slots in slots_by_day.items():
-                for window in _contiguous_windows(day_slots, meeting.duration_atoms):
+            for day in slots_by_day:
+                for window in windows_by_duration_day[meeting.duration_atoms][day]:
                     window_ids = {slot.pk for slot in window}
                     if not window_ids.issubset(room_available[room.pk]):
                         continue

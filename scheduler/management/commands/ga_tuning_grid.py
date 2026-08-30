@@ -9,7 +9,7 @@ from typing import Any
 from django.core.management.base import BaseCommand, CommandError, CommandParser
 
 from scheduler import models
-from scheduler.services.runs import create_run, execute_run, queue_run
+from scheduler.services.runs import build_solver_config, create_run, execute_run, queue_run
 from scheduler.services.tuning import (
     GA_TUNING_SEEDS,
     build_ga_tuning_plan,
@@ -18,7 +18,7 @@ from scheduler.services.tuning import (
 
 
 class Command(BaseCommand):
-    help = "Plan or explicitly run the fixed 24-by-10 GA pilot-tuning grid."
+    help = "Plan or explicitly run the fixed 24-by-10 GA-v2 pilot-tuning grid."
 
     def add_arguments(self, parser: CommandParser) -> None:
         parser.add_argument("snapshot_id", type=int)
@@ -39,10 +39,14 @@ class Command(BaseCommand):
             raise CommandError(f"Problem snapshot {options['snapshot_id']} does not exist") from exc
 
         mode = options["mode"]
+        plan = build_ga_tuning_plan(
+            snapshot,
+            GA_TUNING_SEEDS,
+            time_limit_seconds=options["time_limit"],
+        )
         if mode == "select":
-            payload = self._selection_payload(snapshot)
+            payload = self._selection_payload(snapshot, plan)
         else:
-            plan = build_ga_tuning_plan(snapshot, GA_TUNING_SEEDS)
             payload = {"dry_run": mode == "plan", **plan}
             if mode in {"direct", "queue"}:
                 payload["created_run_ids"] = self._launch(plan, snapshot, options)
@@ -75,13 +79,24 @@ class Command(BaseCommand):
         run_ids: list[int] = []
         for entry in plan["runs"]:
             configuration = {
-                **entry["solver_configuration"],
-                "time_limit_seconds": options["time_limit"],
-                "worker_count": 1,
+                **{
+                    key: value
+                    for key, value in entry["resolved_configuration"].items()
+                    if key not in {"algorithm", "seed"}
+                },
                 "research_phase": "GA_SYNTHETIC_TUNING",
                 "ga_tuning_protocol": plan["protocol_version"],
                 "ga_tuning_plan_hash": plan["plan_hash"],
                 "ga_tuning_configuration_id": entry["configuration_id"],
+                "ga_tuning_resolved_configuration_hash": entry[
+                    "resolved_configuration_hash"
+                ],
+                "ga_tuning_order_seed": plan["order_seed"],
+                "ga_tuning_order_position": entry["position"],
+                "environment_manifest_hash": plan["environment_manifest_hash"],
+                "build_hash": plan["build_hash"],
+                "implementation_version": plan["implementation_version"],
+                "resolved_configuration": entry["resolved_configuration"],
                 "persist_schedule": False,
             }
             run = create_run(
@@ -98,29 +113,62 @@ class Command(BaseCommand):
                 queue_run(run)
         return run_ids
 
-    def _selection_payload(self, snapshot: models.ProblemSnapshot) -> dict[str, Any]:
+    def _selection_payload(
+        self,
+        snapshot: models.ProblemSnapshot,
+        plan: dict[str, Any],
+    ) -> dict[str, Any]:
         rows: list[dict[str, Any]] = []
         runs = snapshot.runs.filter(
             algorithm=models.SolverAlgorithm.GENETIC_ALGORITHM,
             configuration__research_phase="GA_SYNTHETIC_TUNING",
+            configuration__ga_tuning_protocol=plan["protocol_version"],
+            configuration__ga_tuning_plan_hash=plan["plan_hash"],
         )
         for run in runs:
             if not run.is_terminal:
                 continue
+            diagnostics = run.diagnostics if isinstance(run.diagnostics, dict) else {}
+            diagnostic_metrics = diagnostics.get("metrics") or {}
+            implementation_version = diagnostics.get("implementation_version") or (
+                diagnostic_metrics.get("implementation_version")
+                if isinstance(diagnostic_metrics, dict)
+                else None
+            )
+            actual_resolved_configuration = {
+                **build_solver_config(run).to_dict(),
+                # The tuning manifest uses the persisted/API algorithm ID
+                # ("GA"), while the dependency-free domain enum spells this
+                # value "GENETIC_ALGORITHM". Normalize to the frozen manifest.
+                "algorithm": run.algorithm,
+                "implementation_version": implementation_version,
+            }
             rows.append(
                 {
                     "configuration_id": run.configuration.get(
                         "ga_tuning_configuration_id", ""
+                    ),
+                    "seed": run.seed,
+                    "terminal": True,
+                    "protocol_version": run.configuration.get("ga_tuning_protocol"),
+                    "implementation_version": implementation_version,
+                    "plan_hash": run.configuration.get("ga_tuning_plan_hash"),
+                    "resolved_configuration_hash": models.canonical_sha256(
+                        actual_resolved_configuration
+                    ),
+                    "time_limit_seconds": run.configuration.get(
+                        "time_limit_seconds"
                     ),
                     "feasible": run.status in {
                         models.RunStatus.FEASIBLE,
                         models.RunStatus.OPTIMAL,
                     },
                     "raw_soft_penalty": run.objective_value,
+                    "first_feasible_seconds": run.first_feasible_seconds,
                     "execution_seconds": run.execution_seconds,
                 }
             )
         try:
-            return select_ga_tuning_configuration(rows)
+            return select_ga_tuning_configuration(rows, plan)
         except ValueError as exc:
             raise CommandError(str(exc)) from exc

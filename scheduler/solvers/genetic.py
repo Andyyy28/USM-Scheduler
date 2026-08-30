@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from collections import OrderedDict
 from collections.abc import Callable
 from dataclasses import dataclass
+from math import prod
 from random import Random
 from time import monotonic
 
@@ -22,12 +24,24 @@ from scheduler.domain.validation import validate_schedule
 
 Chromosome = tuple[int, ...]
 Fitness = tuple[int, int]
+GA_IMPLEMENTATION_VERSION = "ga-v2"
+_CACHE_GENE_BUDGET = 5_000_000
+_MIN_CACHE_ENTRIES = 100
+_MAX_CACHE_ENTRIES = 100_000
+_MAX_OFFSPRING_ATTEMPT_MULTIPLIER = 4
+_STAGNANT_GENERATION_LIMIT = 10
 
 
 @dataclass(frozen=True, slots=True)
 class _Individual:
     chromosome: Chromosome
     fitness: Fitness
+
+
+@dataclass(frozen=True, slots=True)
+class _Evaluation:
+    fitness: Fitness
+    conflict_event_indexes: tuple[int, ...]
 
 
 class GeneticAlgorithmSolver:
@@ -52,48 +66,118 @@ class GeneticAlgorithmSolver:
             event_indexes[event_id]: _candidate_index(events[event_indexes[event_id]], candidate_id)
             for event_id, candidate_id in problem.lock_map.items()
         }
+        mutable_event_count = len(events) - len(locked_genes)
         mutation_rate = config.mutation_rate
         if mutation_rate is None:
-            mutation_rate = 1.0 / max(1, len(events))
+            mutation_rate = (
+                min(1.0, 2.0 / mutable_event_count) if mutable_event_count else 0.0
+            )
 
-        fitness_cache: dict[Chromosome, Fitness] = {}
+        cache_capacity = _cache_capacity(len(events))
+        fitness_cache: OrderedDict[Chromosome, _Evaluation] = OrderedDict()
         evaluated_count = 0
+        cache_hits = 0
+        cache_misses = 0
+        cache_evictions = 0
+        duplicates_suppressed = 0
         first_feasible_seconds: float | None = None
 
-        def evaluate(chromosome: Chromosome) -> Fitness:
-            nonlocal evaluated_count, first_feasible_seconds
+        def evaluate(chromosome: Chromosome) -> _Evaluation:
+            nonlocal evaluated_count, cache_hits, cache_misses, cache_evictions
+            nonlocal first_feasible_seconds
             cached = fitness_cache.get(chromosome)
             if cached is not None:
+                cache_hits += 1
+                fitness_cache.move_to_end(chromosome)
                 return cached
+            cache_misses += 1
             assignments = _to_assignments(events, chromosome)
             validation = validate_schedule(problem, assignments)
             objective = score_schedule(problem, assignments)
-            result = (validation.hard_violation_count, objective.weighted_total)
+            involved = {
+                event_indexes[event_id]
+                for violation in validation.violations
+                for event_id in violation.event_ids
+                if event_id in event_indexes and event_indexes[event_id] not in locked_genes
+            }
+            result = _Evaluation(
+                fitness=(validation.hard_violation_count, objective.weighted_total),
+                conflict_event_indexes=tuple(sorted(involved)),
+            )
             fitness_cache[chromosome] = result
+            if len(fitness_cache) > cache_capacity:
+                fitness_cache.popitem(last=False)
+                cache_evictions += 1
             evaluated_count += 1
-            if result[0] == 0 and first_feasible_seconds is None:
+            if result.fitness[0] == 0 and first_feasible_seconds is None:
                 first_feasible_seconds = monotonic() - started_at
             return result
 
-        population: list[_Individual] = []
-        minimum_initial_size = max(2, config.tournament_size)
-        while len(population) < config.population_size and (
-            len(population) < minimum_initial_size or monotonic() < deadline
+        # Exactly one incumbent is always constructed. After that first evaluation,
+        # every expensive boundary observes the caller's wall-clock deadline.
+        first_chromosome = _randomized_greedy(events, locked_genes, rng)
+        first_evaluation = evaluate(first_chromosome)
+        population = [
+            _Individual(chromosome=first_chromosome, fitness=first_evaluation.fitness)
+        ]
+        population_chromosomes = {first_chromosome}
+        initial_attempts = 1
+        initial_attempt_limit = max(
+            config.population_size,
+            config.population_size * _MAX_OFFSPRING_ATTEMPT_MULTIPLIER,
+        )
+        search_space_size = _search_space_size(events, locked_genes)
+        small_search_space = search_space_size <= cache_capacity
+        search_space_exhausted = small_search_space and evaluated_count >= search_space_size
+        while (
+            len(population) < config.population_size
+            and initial_attempts < initial_attempt_limit
+            and not search_space_exhausted
+            and monotonic() < deadline
         ):
             chromosome = _randomized_greedy(events, locked_genes, rng)
-            individual = _Individual(chromosome=chromosome, fitness=evaluate(chromosome))
-            population.append(individual)
+            initial_attempts += 1
+            if chromosome in population_chromosomes:
+                duplicates_suppressed += 1
+                continue
+            if monotonic() >= deadline:
+                break
+            evaluation = evaluate(chromosome)
+            population.append(_Individual(chromosome, evaluation.fitness))
+            population_chromosomes.add(chromosome)
+            search_space_exhausted = (
+                small_search_space and evaluated_count >= search_space_size
+            )
         population.sort(key=lambda individual: individual.fitness)
+        initial_population_size = len(population)
         best = population[0]
         generation = 0
+        generations_without_new_evaluation = 0
+        maximum_stagnation = 0
         crossover_blocks = _crossover_blocks(events)
 
-        while monotonic() < deadline and (
-            config.max_generations is None or generation < config.max_generations
+        while (
+            monotonic() < deadline
+            and not search_space_exhausted
+            and generations_without_new_evaluation < _STAGNANT_GENERATION_LIMIT
+            and (config.max_generations is None or generation < config.max_generations)
         ):
-            elite_count = max(1, int(config.population_size * config.elite_fraction))
+            evaluations_before_generation = evaluated_count
+            target_size = config.population_size
+            elite_count = min(
+                len(population),
+                max(1, int(target_size * config.elite_fraction)),
+            )
             next_population = population[:elite_count]
-            while len(next_population) < config.population_size and monotonic() < deadline:
+            next_chromosomes = {individual.chromosome for individual in next_population}
+            offspring_attempts = 0
+            offspring_attempt_limit = target_size * _MAX_OFFSPRING_ATTEMPT_MULTIPLIER
+            while (
+                len(next_population) < target_size
+                and offspring_attempts < offspring_attempt_limit
+                and monotonic() < deadline
+            ):
+                offspring_attempts += 1
                 left = _tournament(population, config.tournament_size, rng)
                 right = _tournament(population, config.tournament_size, rng)
                 if rng.random() < config.crossover_rate:
@@ -109,8 +193,9 @@ class GeneticAlgorithmSolver:
                     mutation_rate,
                     rng,
                 )
+                if monotonic() >= deadline:
+                    break
                 chromosome = _repair(
-                    problem,
                     events,
                     chromosome,
                     locked_genes,
@@ -119,15 +204,37 @@ class GeneticAlgorithmSolver:
                     rng,
                     deadline,
                 )
-                next_population.append(
-                    _Individual(chromosome=chromosome, fitness=evaluate(chromosome))
+                if monotonic() >= deadline:
+                    break
+                if chromosome in next_chromosomes:
+                    duplicates_suppressed += 1
+                    continue
+                evaluation = evaluate(chromosome)
+                next_population.append(_Individual(chromosome, evaluation.fitness))
+                next_chromosomes.add(chromosome)
+                search_space_exhausted = (
+                    small_search_space and evaluated_count >= search_space_size
                 )
-            while len(next_population) < config.population_size:
-                next_population.append(population[len(next_population) % len(population)])
+                if search_space_exhausted:
+                    break
+            if len(next_population) < target_size:
+                # A saturated generation may have fewer unique chromosomes than the
+                # requested population. Reusing incumbents keeps selection well-defined
+                # without performing or claiming additional evaluations.
+                source = population or next_population
+                while len(next_population) < target_size:
+                    next_population.append(source[len(next_population) % len(source)])
             population = sorted(next_population, key=lambda individual: individual.fitness)
             generation += 1
             if population[0].fitness < best.fitness:
                 best = population[0]
+            if evaluated_count == evaluations_before_generation:
+                generations_without_new_evaluation += 1
+            else:
+                generations_without_new_evaluation = 0
+            maximum_stagnation = max(
+                maximum_stagnation, generations_without_new_evaluation
+            )
 
         runtime = monotonic() - started_at
         assignments = _to_assignments(events, best.chromosome)
@@ -135,18 +242,33 @@ class GeneticAlgorithmSolver:
         objective = score_schedule(problem, assignments)
         if validation.feasible:
             status = SolverStatus.FEASIBLE
-            stopping_reason = (
-                "Configured generation limit reached with a feasible incumbent."
-                if config.max_generations is not None and generation >= config.max_generations
-                else "Time limit reached with a feasible incumbent."
-            )
+            if search_space_exhausted:
+                stopping_reason = (
+                    "The small search space was exhaustively evaluated; returning a "
+                    "feasible incumbent without an optimality claim."
+                )
+            elif generations_without_new_evaluation >= _STAGNANT_GENERATION_LIMIT:
+                stopping_reason = "Search stagnated with a feasible incumbent."
+            elif config.max_generations is not None and generation >= config.max_generations:
+                stopping_reason = "Configured generation limit reached with a feasible incumbent."
+            else:
+                stopping_reason = "Time limit reached with a feasible incumbent."
         else:
             status = SolverStatus.NO_SOLUTION
-            stopping_reason = (
-                "No feasible solution found before the configured generation limit."
-                if config.max_generations is not None and generation >= config.max_generations
-                else "No feasible solution found within the time limit."
-            )
+            if search_space_exhausted:
+                stopping_reason = (
+                    "No feasible solution was found after exhausting the search space; "
+                    "the Genetic Algorithm does not claim infeasibility."
+                )
+            elif generations_without_new_evaluation >= _STAGNANT_GENERATION_LIMIT:
+                stopping_reason = (
+                    "No feasible solution was found before search stagnated; "
+                    "no infeasibility is claimed."
+                )
+            elif config.max_generations is not None and generation >= config.max_generations:
+                stopping_reason = "No feasible solution found before the generation limit."
+            else:
+                stopping_reason = "No feasible solution found within the time limit."
 
         return SolverResult(
             algorithm=self.algorithm,
@@ -161,13 +283,23 @@ class GeneticAlgorithmSolver:
             problem_hash=problem.canonical_hash,
             config_hash=config.canonical_hash,
             metrics=(
+                ("implementation_version", GA_IMPLEMENTATION_VERSION),
                 ("evaluated_chromosomes", evaluated_count),
                 ("final_hard_violations", best.fitness[0]),
                 ("final_soft_penalty", best.fitness[1]),
                 ("generations", generation),
-                ("initial_population_size", len(population)),
+                ("initial_population_size", initial_population_size),
+                ("mutable_event_count", mutable_event_count),
                 ("mutation_rate", mutation_rate),
                 ("population_size", config.population_size),
+                ("cache_capacity", cache_capacity),
+                ("cache_hits", cache_hits),
+                ("cache_misses", cache_misses),
+                ("cache_evictions", cache_evictions),
+                ("duplicates_suppressed", duplicates_suppressed),
+                ("stagnation_generations", maximum_stagnation),
+                ("search_space_size", search_space_size),
+                ("search_space_exhausted", search_space_exhausted),
                 ("worker_count", 1),
             ),
         )
@@ -197,7 +329,7 @@ def _randomized_greedy(
     rng: Random,
 ) -> Chromosome:
     chromosome = [-1] * len(events)
-    order = list(range(len(events)))
+    order = [index for index in range(len(events)) if index not in locked_genes]
     rng.shuffle(order)
     order.sort(key=lambda index: len(events[index].candidates))
     room_occupancy: dict[tuple[str, str], set[str]] = {}
@@ -205,33 +337,45 @@ def _randomized_greedy(
     section_occupancy: dict[tuple[str, str], set[str]] = {}
     distinct_days: dict[tuple[str, str], set[str]] = {}
 
+    # Locks are immutable parts of the partial schedule. Seed them first so
+    # every mutable event is ranked against their occupancy regardless of the
+    # randomized construction order.
+    for event_index, selected_index in sorted(locked_genes.items()):
+        event = events[event_index]
+        chromosome[event_index] = selected_index
+        _occupy(
+            event,
+            event.candidates[selected_index],
+            room_occupancy,
+            instructor_occupancy,
+            section_occupancy,
+            distinct_days,
+        )
+
     for event_index in order:
         event = events[event_index]
-        if event_index in locked_genes:
-            selected_index = locked_genes[event_index]
-        else:
-            candidate_indexes = list(range(len(event.candidates)))
-            rng.shuffle(candidate_indexes)
-            ranked = [
+        candidate_indexes = list(range(len(event.candidates)))
+        rng.shuffle(candidate_indexes)
+        ranked = [
+            (
                 (
-                    (
-                        _incremental_conflict_count(
-                            event,
-                            event.candidates[candidate_index],
-                            room_occupancy,
-                            instructor_occupancy,
-                            section_occupancy,
-                            distinct_days,
-                        ),
-                        event.candidates[candidate_index].preference_penalty,
+                    _incremental_conflict_count(
+                        event,
+                        event.candidates[candidate_index],
+                        room_occupancy,
+                        instructor_occupancy,
+                        section_occupancy,
+                        distinct_days,
                     ),
-                    candidate_index,
-                )
-                for candidate_index in candidate_indexes
-            ]
-            best_fitness = min(item[0] for item in ranked)
-            best_candidates = [index for fitness, index in ranked if fitness == best_fitness]
-            selected_index = rng.choice(best_candidates)
+                    event.candidates[candidate_index].preference_penalty,
+                ),
+                candidate_index,
+            )
+            for candidate_index in candidate_indexes
+        ]
+        best_fitness = min(item[0] for item in ranked)
+        best_candidates = [index for fitness, index in ranked if fitness == best_fitness]
+        selected_index = rng.choice(best_candidates)
         chromosome[event_index] = selected_index
         _occupy(
             event,
@@ -291,7 +435,7 @@ def _occupy(
 
 
 def _tournament(population: list[_Individual], size: int, rng: Random) -> _Individual:
-    contestants = rng.sample(population, size)
+    contestants = rng.sample(population, min(size, len(population)))
     return min(contestants, key=lambda individual: individual.fitness)
 
 
@@ -335,28 +479,23 @@ def _mutate(
 
 
 def _repair(
-    problem: ProblemInstance,
     events: tuple[MeetingEvent, ...],
     chromosome: Chromosome,
     locked_genes: dict[int, int],
     attempts: int,
-    evaluate: Callable[[Chromosome], Fitness],
+    evaluate: Callable[[Chromosome], _Evaluation],
     rng: Random,
     deadline: float,
 ) -> Chromosome:
     current = chromosome
-    current_fitness = evaluate(current)
-    event_indexes = {event.event_id: index for index, event in enumerate(events)}
+    if monotonic() >= deadline:
+        return current
+    current_evaluation = evaluate(current)
+    current_fitness = current_evaluation.fitness
     for _ in range(attempts):
         if current_fitness[0] == 0 or monotonic() >= deadline:
             break
-        report = validate_schedule(problem, _to_assignments(events, current))
-        involved = {
-            event_indexes[event_id]
-            for violation in report.violations
-            for event_id in violation.event_ids
-            if event_id in event_indexes and event_indexes[event_id] not in locked_genes
-        }
+        involved = set(current_evaluation.conflict_event_indexes)
         if not involved:
             break
         ordered = sorted(involved, key=lambda index: (len(events[index].candidates), index))
@@ -366,6 +505,7 @@ def _repair(
             rng.shuffle(candidate_indexes)
             best_chromosome = current
             best_fitness = current_fitness
+            best_evaluation = current_evaluation
             for candidate_index in candidate_indexes:
                 if monotonic() >= deadline:
                     return current
@@ -374,15 +514,33 @@ def _repair(
                 trial = list(current)
                 trial[index] = candidate_index
                 trial_chromosome = tuple(trial)
-                trial_fitness = evaluate(trial_chromosome)
+                trial_evaluation = evaluate(trial_chromosome)
+                trial_fitness = trial_evaluation.fitness
                 if trial_fitness < best_fitness:
                     best_chromosome = trial_chromosome
                     best_fitness = trial_fitness
+                    best_evaluation = trial_evaluation
             if best_fitness < current_fitness:
                 current = best_chromosome
                 current_fitness = best_fitness
+                current_evaluation = best_evaluation
                 improved = True
                 break
         if not improved:
             break
     return current
+
+
+def _cache_capacity(gene_count: int) -> int:
+    approximate = _CACHE_GENE_BUDGET // max(1, gene_count)
+    return min(_MAX_CACHE_ENTRIES, max(_MIN_CACHE_ENTRIES, approximate))
+
+
+def _search_space_size(
+    events: tuple[MeetingEvent, ...], locked_genes: dict[int, int]
+) -> int:
+    return prod(
+        len(event.candidates)
+        for index, event in enumerate(events)
+        if index not in locked_genes
+    )

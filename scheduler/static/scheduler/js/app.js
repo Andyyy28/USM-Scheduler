@@ -6,9 +6,11 @@
 
   const menuButton = select(".menu-button");
   const sidebar = select(".sidebar");
+  const closeButton = select("[data-nav-close]", sidebar || document);
   const scrim = select("[data-nav-scrim]");
   const pageShell = select(".page-shell");
-  const mobileNavigation = window.matchMedia("(max-width: 60rem)");
+  const mobileNavigation = window.matchMedia("(max-width: 74rem)");
+  let menuOpener = menuButton;
 
   const menuFocusable = () => selectAll(
     "a[href], button:not([disabled]), summary, input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex='-1'])",
@@ -17,6 +19,7 @@
 
   const setMenu = (open, { restoreFocus = true } = {}) => {
     if (!menuButton || !sidebar || !scrim) return;
+    const wasOpen = document.body.classList.contains("nav-open");
     const shouldOpen = Boolean(open && mobileNavigation.matches);
     document.body.classList.toggle("nav-open", shouldOpen);
     menuButton.setAttribute("aria-expanded", String(shouldOpen));
@@ -25,23 +28,44 @@
     );
     scrim.hidden = !shouldOpen;
     if (shouldOpen) {
+      menuOpener = document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : menuButton;
+      sidebar.removeAttribute("aria-hidden");
+      sidebar.setAttribute("role", "dialog");
+      sidebar.setAttribute("aria-modal", "true");
+      sidebar.inert = false;
       if (pageShell) {
         pageShell.setAttribute("aria-hidden", "true");
         pageShell.inert = true;
       }
-      menuFocusable()[0]?.focus();
+      closeButton?.focus();
     } else {
       if (pageShell) {
         pageShell.removeAttribute("aria-hidden");
         pageShell.inert = false;
       }
-      if (restoreFocus && mobileNavigation.matches) menuButton.focus();
+      sidebar.removeAttribute("role");
+      sidebar.removeAttribute("aria-modal");
+      if (mobileNavigation.matches) {
+        sidebar.setAttribute("aria-hidden", "true");
+        sidebar.inert = true;
+      } else {
+        sidebar.removeAttribute("aria-hidden");
+        sidebar.inert = false;
+      }
+      if (restoreFocus && wasOpen && mobileNavigation.matches) menuOpener?.focus();
     }
+  };
+
+  const syncNavigationMode = () => {
+    setMenu(false, { restoreFocus: false });
   };
 
   menuButton?.addEventListener("click", () => {
     setMenu(menuButton.getAttribute("aria-expanded") !== "true");
   });
+  closeButton?.addEventListener("click", () => setMenu(false));
   scrim?.addEventListener("click", () => setMenu(false));
   sidebar?.addEventListener("click", (event) => {
     if (event.target.closest("a") && mobileNavigation.matches) setMenu(false, { restoreFocus: false });
@@ -66,8 +90,115 @@
       first.focus();
     }
   });
-  mobileNavigation.addEventListener("change", (event) => {
-    if (!event.matches) setMenu(false, { restoreFocus: false });
+  mobileNavigation.addEventListener("change", syncNavigationMode);
+  syncNavigationMode();
+
+  const tableWrappers = selectAll(".table-wrap");
+  const updateTableOverflow = (wrapper) => {
+    const table = select("table", wrapper);
+    if (!table) return;
+    const isOverflowing = wrapper.scrollWidth > wrapper.clientWidth + 1;
+    const heading = wrapper.closest(".panel")?.querySelector("h2, h3")?.textContent.trim();
+    let captionElement = select("caption", table);
+    if (!captionElement) {
+      captionElement = document.createElement("caption");
+      captionElement.className = "visually-hidden";
+      captionElement.dataset.generatedCaption = "true";
+      captionElement.textContent = heading || "Data table";
+      table.prepend(captionElement);
+    }
+    const label = captionElement.textContent.trim() || "Data table";
+    let cue = wrapper.nextElementSibling;
+    if (!cue?.matches(".table-scroll-cue[data-table-scroll-cue]")) {
+      cue = document.createElement("p");
+      cue.className = "table-scroll-cue";
+      cue.dataset.tableScrollCue = "";
+      cue.setAttribute("aria-hidden", "true");
+      cue.textContent = "Scroll horizontally to see all columns \u2192";
+      wrapper.insertAdjacentElement("afterend", cue);
+    }
+
+    wrapper.dataset.overflow = String(isOverflowing);
+    cue.hidden = !isOverflowing;
+    if (isOverflowing) {
+      if (!wrapper.hasAttribute("tabindex")) {
+        wrapper.tabIndex = 0;
+        wrapper.dataset.managedTabindex = "true";
+      }
+      if (!wrapper.hasAttribute("aria-label")) {
+        wrapper.setAttribute("aria-label", `Scrollable table: ${label}`);
+        wrapper.dataset.managedAriaLabel = "true";
+      }
+      if (!wrapper.hasAttribute("role")) {
+        wrapper.setAttribute("role", "region");
+        wrapper.dataset.managedRole = "true";
+      }
+    } else {
+      if (wrapper.dataset.managedTabindex === "true") wrapper.removeAttribute("tabindex");
+      if (wrapper.dataset.managedAriaLabel === "true") wrapper.removeAttribute("aria-label");
+      if (wrapper.dataset.managedRole === "true") wrapper.removeAttribute("role");
+      delete wrapper.dataset.managedTabindex;
+      delete wrapper.dataset.managedAriaLabel;
+      delete wrapper.dataset.managedRole;
+    }
+  };
+
+  if (tableWrappers.length) {
+    const refreshTableOverflow = () => tableWrappers.forEach(updateTableOverflow);
+    if ("ResizeObserver" in window) {
+      const tableResizeObserver = new ResizeObserver((entries) => {
+        entries.forEach(({ target }) => updateTableOverflow(target));
+      });
+      tableWrappers.forEach((wrapper) => tableResizeObserver.observe(wrapper));
+    } else {
+      window.addEventListener("resize", refreshTableOverflow);
+    }
+    window.addEventListener("load", refreshTableOverflow, { once: true });
+    window.requestAnimationFrame(refreshTableOverflow);
+  }
+
+  selectAll("[data-benchmark-chart]").forEach((chart) => {
+    const bars = selectAll("[data-benchmark-value]", chart);
+    const whiskers = selectAll("[data-benchmark-low][data-benchmark-high]", chart);
+    const finiteNumber = (value) => {
+      const parsed = Number.parseFloat(value);
+      return Number.isFinite(parsed) ? parsed : null;
+    };
+    const observedValues = [
+      ...bars.map((bar) => finiteNumber(bar.dataset.benchmarkValue)),
+      ...whiskers.map((whisker) => finiteNumber(whisker.dataset.benchmarkHigh)),
+    ].filter((value) => value !== null && value >= 0);
+    const observedMaximum = observedValues.length ? Math.max(...observedValues) : 0;
+    const declaredMaximum = finiteNumber(chart.dataset.scaleMax);
+    const scaleMaximum = declaredMaximum !== null && declaredMaximum > 0
+      ? declaredMaximum
+      : (observedMaximum > 0 ? observedMaximum : 1);
+    const percent = (value) => `${Math.max(0, Math.min(100, value / scaleMaximum * 100))}%`;
+
+    bars.forEach((bar) => {
+      const value = finiteNumber(bar.dataset.benchmarkValue);
+      if (value !== null) bar.style.setProperty("--benchmark-bar-size", percent(value));
+    });
+    whiskers.forEach((whisker) => {
+      const low = finiteNumber(whisker.dataset.benchmarkLow);
+      const high = finiteNumber(whisker.dataset.benchmarkHigh);
+      if (low === null || high === null) return;
+      const lower = Math.min(low, high);
+      const upper = Math.max(low, high);
+      whisker.style.setProperty("--benchmark-whisker-start", percent(lower));
+      whisker.style.setProperty(
+        "--benchmark-whisker-size",
+        percent(Math.max(0, upper - lower)),
+      );
+    });
+
+    const scaleLabel = select("[data-benchmark-scale-label]", chart);
+    if (scaleLabel && declaredMaximum === null) {
+      scaleLabel.textContent = observedMaximum > 0
+        ? `Observed maximum ${new Intl.NumberFormat("en", { maximumFractionDigits: 3 }).format(observedMaximum)}`
+        : (observedValues.length ? "All observed values 0" : "No feasible values");
+    }
+    chart.dataset.enhanced = "true";
   });
 
   selectAll(".message__dismiss").forEach((button) => {

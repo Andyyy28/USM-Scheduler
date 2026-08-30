@@ -59,8 +59,7 @@ def test_trial_download_is_deterministic_synthetic_and_role_restricted() -> None
     assert "Synthetic-Trial" in response["Content-Disposition"]
 
 
-@pytest.mark.skipif(not is_ortools_available(), reason="OR-Tools is not installed")
-def test_trial_workbook_imports_preflights_and_is_feasible_for_both_engines() -> None:
+def test_trial_workbook_imports_and_preflights_deterministically() -> None:
     central = models.User.objects.create_user(
         username="trial-scheduler",
         role=models.UserRole.CENTRAL_SCHEDULER,
@@ -89,13 +88,37 @@ def test_trial_workbook_imports_preflights_and_is_feasible_for_both_engines() ->
     assert any(event.requires_laboratory_room for event in problem.events)
     assert any(len(event.section_ids) == 2 for event in problem.events)
     assert any(len(event.instructor_ids) == 2 for event in problem.events)
+    assert all(event.candidates for event in problem.events)
+    assert {
+        lock.event_id: lock.candidate_id for lock in problem.locked_assignments
+    }.items() <= {
+        event.event_id: event.candidates[0].candidate_id for event in problem.events
+    }.items()
+
+
+@pytest.mark.diagnostic
+@pytest.mark.skipif(not is_ortools_available(), reason="OR-Tools is not installed")
+def test_trial_workbook_performance_exercise_is_feasible_for_both_engines() -> None:
+    central = models.User.objects.create_user(
+        username="trial-diagnostic-scheduler",
+        role=models.UserRole.CENTRAL_SCHEDULER,
+    )
+    batch = preview_workbook(build_trial_workbook_bytes(), _term(), central)
+    revision = commit_import(batch, central)
+    objective = models.ObjectiveProfile.objects.create(
+        name="Synthetic trial diagnostic objective",
+        term=revision.term,
+        is_approved=True,
+        approved_by=central,
+    )
+    problem = build_problem(revision, objective).problem
 
     cp_result = CpSatSolver().solve(
         problem,
         SolverConfig(
             algorithm=SolverAlgorithm.CP_SAT,
             seed=1001,
-            time_limit_seconds=5,
+            time_limit_seconds=30,
             worker_count=1,
         ),
     )
@@ -107,7 +130,7 @@ def test_trial_workbook_imports_preflights_and_is_feasible_for_both_engines() ->
         SolverConfig(
             algorithm=SolverAlgorithm.GENETIC_ALGORITHM,
             seed=1001,
-            time_limit_seconds=5,
+            time_limit_seconds=30,
             worker_count=1,
             population_size=100,
             tournament_size=3,

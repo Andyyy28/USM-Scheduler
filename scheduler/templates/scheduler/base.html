@@ -18,6 +18,10 @@
   <a class="skip-link" href="#main-content">Skip to main content</a>
   <div class="app-shell">
     <aside class="sidebar" id="site-navigation" aria-label="Primary navigation">
+      <button class="icon-button sidebar__close js-only" type="button" data-nav-close>
+        <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></svg>
+        <span class="visually-hidden">Close navigation</span>
+      </button>
       <a class="brand" href="{% url 'scheduler:dashboard' %}" aria-label="USM Scheduling System home">
         <span class="brand__seal-frame" aria-hidden="true"><img class="brand__seal" src="{% static 'scheduler/img/usm-seal.png' %}" alt=""></span>
         <span>
@@ -58,7 +62,7 @@
 
     <div class="page-shell">
       <header class="topbar">
-        <button class="icon-button menu-button" type="button" aria-controls="site-navigation" aria-expanded="false">
+        <button class="icon-button menu-button js-only" type="button" aria-controls="site-navigation" aria-expanded="false">
           <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/></svg><span class="visually-hidden">Open navigation</span>
         </button>
         <div class="topbar__context">
@@ -66,7 +70,7 @@
           <span class="topbar__title">Scheduling Decision Support</span>
         </div>
         <details class="user-menu">
-          <summary>
+          <summary aria-label="Account menu for {{ request.user.get_short_name|default:request.user.username }}">
             <span class="avatar" aria-hidden="true">{{ request.user.get_short_name|default:request.user.username|slice:':1'|upper }}</span>
             <span class="user-menu__name">{{ request.user.get_short_name|default:request.user.username }}</span>
           </summary>
@@ -109,7 +113,7 @@
       </footer>
     </div>
   </div>
-  <div class="nav-scrim" data-nav-scrim hidden></div>
+  <div class="nav-scrim" data-nav-scrim aria-hidden="true" hidden></div>
   {% block extra_body %}{% endblock %}
 </body>
 </html>

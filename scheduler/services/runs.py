@@ -14,14 +14,15 @@ from django.db.models import Max
 from django.utils import timezone
 
 from scheduler import models
-from scheduler.domain import SolverAlgorithm as DomainAlgorithm
 from scheduler.domain import (
+    ProblemInstance,
     SolverConfig,
     SolverResult,
     SolverStatus,
     score_schedule,
     validate_schedule,
 )
+from scheduler.domain import SolverAlgorithm as DomainAlgorithm
 from scheduler.services.problem_builder import load_problem
 from scheduler.solvers import CpSatSolver, GeneticAlgorithmSolver
 
@@ -149,6 +150,89 @@ def _solver_for(algorithm: DomainAlgorithm):
     return GeneticAlgorithmSolver()
 
 
+def _verify_solver_result(
+    problem: ProblemInstance,
+    config: SolverConfig,
+    result: SolverResult,
+) -> SolverResult:
+    """Reconstruct solver claims at the service boundary.
+
+    A rejected result remains persistable as failed diagnostic evidence, but
+    its untrusted validation/objective values can never promote a schedule.
+    """
+
+    independent_report = validate_schedule(problem, result.assignments)
+    reconstructed_objective = None
+    try:
+        if result.assignments:
+            reconstructed_objective = score_schedule(problem, result.assignments)
+    except ValueError:
+        # Empty, partial, duplicate, or invalid assignments have no complete
+        # objective reconstruction.  The validation report above explains why.
+        reconstructed_objective = None
+
+    mismatches: list[str] = []
+    if result.problem_hash != problem.canonical_hash:
+        mismatches.append("problem hash")
+    if result.config_hash != config.canonical_hash:
+        mismatches.append("resolved configuration hash")
+    if result.algorithm != config.algorithm:
+        mismatches.append("algorithm")
+    if result.seed != config.seed:
+        mismatches.append("seed")
+    if result.validation.feasible != independent_report.feasible:
+        mismatches.append("feasibility")
+    claimed_success = result.status in {SolverStatus.OPTIMAL, SolverStatus.FEASIBLE}
+    if claimed_success != independent_report.feasible:
+        mismatches.append("solver status feasibility claim")
+    if result.objective != reconstructed_objective:
+        mismatches.append("full objective breakdown")
+
+    reserved_prefixes = ("service_verification_", "reported_")
+    metrics = tuple(
+        (name, value)
+        for name, value in result.metrics
+        if not name.startswith(reserved_prefixes)
+    )
+    metrics += (
+        ("service_verification_performed", 1),
+        ("service_verification_passed", int(not mismatches)),
+        ("service_verification_mismatch_count", len(mismatches)),
+    )
+    status = result.status
+    stopping_reason = result.stopping_reason
+    if mismatches:
+        reported_objective = result.objective
+        metrics += (
+            ("reported_status", result.status.value),
+            ("reported_problem_hash", result.problem_hash),
+            ("reported_config_hash", result.config_hash),
+            ("reported_validation_feasible", result.validation.feasible),
+        )
+        if reported_objective is not None:
+            metrics += tuple(
+                (f"reported_objective_{name}", value)
+                for name, value in reported_objective.to_dict().items()
+            )
+        status = SolverStatus.ERROR
+        stopping_reason = (
+            "Service verification rejected solver result: " + ", ".join(mismatches) + "."
+        )
+
+    # Objective values are decision evidence only for independently feasible
+    # schedules.  Infeasible complete chromosomes may still have been scored
+    # above solely to verify the solver's reported breakdown.
+    trusted_objective = reconstructed_objective if independent_report.feasible else None
+    return replace(
+        result,
+        status=status,
+        validation=independent_report,
+        objective=trusted_objective,
+        stopping_reason=stopping_reason,
+        metrics=metrics,
+    )
+
+
 @transaction.atomic
 def _mark_started(run_id: int) -> models.ScheduleRun:
     run = models.ScheduleRun.objects.select_for_update().select_related("snapshot").get(pk=run_id)
@@ -172,37 +256,7 @@ def execute_run(run_id: int) -> models.ScheduleRun:
         problem = load_problem(run.snapshot)
         config = build_solver_config(run)
         result = _solver_for(config.algorithm).solve(problem, config)
-        validation_started = perf_counter()
-        independent_report = validate_schedule(problem, result.assignments)
-        independent_objective = (
-            score_schedule(problem, result.assignments) if independent_report.feasible else None
-        )
-        validation_seconds = perf_counter() - validation_started
-        claimed_success = result.status in {SolverStatus.OPTIMAL, SolverStatus.FEASIBLE}
-        stopping_reason = result.stopping_reason
-        status = result.status
-        if claimed_success != independent_report.feasible:
-            status = SolverStatus.ERROR
-            stopping_reason = (
-                "Solver status and the independent service-layer validator disagree."
-            )
-        metrics = tuple(
-            (name, value)
-            for name, value in result.metrics
-            if name not in {"independent_validation_seconds", "shared_preprocessing_seconds"}
-        ) + (
-            ("independent_validation_seconds", validation_seconds),
-            ("shared_preprocessing_seconds", run.snapshot.preprocessing_seconds),
-        )
-        verified_result = replace(
-            result,
-            status=status,
-            validation=independent_report,
-            objective=independent_objective,
-            stopping_reason=stopping_reason,
-            metrics=metrics,
-        )
-        persisted = persist_result(run_id, verified_result)
+        persisted = persist_result(run_id, result)
         models.RunMetric.objects.update_or_create(
             run=persisted,
             name="end_to_end_processing_seconds",
@@ -225,7 +279,10 @@ def execute_run(run_id: int) -> models.ScheduleRun:
 
 
 @transaction.atomic
-def persist_result(run_id: int, result: SolverResult) -> models.ScheduleRun:
+def persist_result(
+    run_id: int,
+    result: SolverResult,
+) -> models.ScheduleRun:
     run = (
         models.ScheduleRun.objects.select_for_update()
         .select_related("snapshot__revision__term", "requested_by")
@@ -235,8 +292,20 @@ def persist_result(run_id: int, result: SolverResult) -> models.ScheduleRun:
         return run
     if run.status != models.RunStatus.RUNNING:
         raise ValueError(f"Run {run_id} cannot accept a result while status={run.status}.")
-    if result.problem_hash != load_problem(run.snapshot).canonical_hash:
-        raise ValueError("Solver result problem hash does not match the stored snapshot.")
+    problem = load_problem(run.snapshot)
+    config = build_solver_config(run)
+    validation_started = perf_counter()
+    result = _verify_solver_result(problem, config, result)
+    validation_seconds = perf_counter() - validation_started
+    metrics = tuple(
+        (name, value)
+        for name, value in result.metrics
+        if name not in {"independent_validation_seconds", "shared_preprocessing_seconds"}
+    ) + (
+        ("independent_validation_seconds", validation_seconds),
+        ("shared_preprocessing_seconds", run.snapshot.preprocessing_seconds),
+    )
+    result = replace(result, metrics=metrics)
     run.status = model_status(result)
     run.finished_at = timezone.now()
     run.execution_seconds = result.runtime_seconds
@@ -318,7 +387,8 @@ def persist_result(run_id: int, result: SolverResult) -> models.ScheduleRun:
     models.RunMetric.objects.bulk_create(unique_rows.values())
 
     if (
-        result.validation.feasible
+        result.status in {SolverStatus.OPTIMAL, SolverStatus.FEASIBLE}
+        and result.validation.feasible
         and result.assignments
         and run.configuration.get("persist_schedule", True)
     ):

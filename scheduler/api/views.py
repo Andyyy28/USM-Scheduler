@@ -343,43 +343,98 @@ class RunComparisonView(APIView):
     def get(self, request):
         snapshot_id = request.query_params.get("snapshot_id")
         experiment_id = request.query_params.get("experiment_batch_id")
-        runs = models.ScheduleRun.objects.all()
+        runs = models.ScheduleRun.objects.select_related("snapshot", "experiment_batch")
+        scope: dict[str, int | str]
         if experiment_id:
+            batch = get_object_or_404(models.ExperimentBatch, pk=experiment_id)
             runs = runs.filter(experiment_batch_id=experiment_id)
+            scope = {
+                "type": "controlled_experiment",
+                "experiment_batch_id": batch.pk,
+                "snapshot_id": batch.snapshot_id,
+            }
         elif snapshot_id:
+            snapshot = get_object_or_404(models.ProblemSnapshot, pk=snapshot_id)
             runs = runs.filter(snapshot_id=snapshot_id)
+            scope = {"type": "snapshot", "snapshot_id": snapshot.pk}
         else:
             raise ValidationError("snapshot_id or experiment_batch_id is required.")
+
+        planned_runs = list(runs)
+        if snapshot_id and not experiment_id:
+            from scheduler.services.experiments import snapshot_comparison_heterogeneity
+
+            heterogeneous = snapshot_comparison_heterogeneity(planned_runs)
+            if heterogeneous:
+                return Response(
+                    {
+                        "code": "HETEROGENEOUS_COMPARISON",
+                        "detail": (
+                            "Snapshot comparisons require one deadline and worker count, "
+                            "plus one implementation version and resolved configuration "
+                            "within each algorithm. Use a controlled experiment batch or "
+                            "narrow the run set."
+                        ),
+                        "heterogeneous_dimensions": heterogeneous,
+                    },
+                    status=status.HTTP_409_CONFLICT,
+                )
+
+        from scheduler.services.experiments import TERMINAL_STATUSES
+
         payload: dict[str, dict] = {}
         for algorithm in models.SolverAlgorithm.values:
-            sample = list(runs.filter(algorithm=algorithm))
-            feasible = [run for run in sample if run.status in {models.RunStatus.FEASIBLE, models.RunStatus.OPTIMAL}]
-            interval = wilson_interval(len(feasible), len(sample)) if sample else (None, None)
+            planned = [run for run in planned_runs if run.algorithm == algorithm]
+            observed = [run for run in planned if run.status in TERMINAL_STATUSES]
+            feasible = [
+                run
+                for run in observed
+                if run.status in {models.RunStatus.FEASIBLE, models.RunStatus.OPTIMAL}
+            ]
+            interval = (
+                wilson_interval(len(feasible), len(observed))
+                if observed
+                else (None, None)
+            )
             payload[algorithm] = {
-                "runs": len(sample),
+                "runs": len(observed),
+                "planned_runs": len(planned),
+                "observed_runs": len(observed),
+                "pending_runs": len(planned) - len(observed),
                 "feasible_runs": len(feasible),
-                "success_rate": len(feasible) / len(sample) if sample else None,
+                "success_rate": len(feasible) / len(observed) if observed else None,
                 "success_rate_wilson_95": interval,
                 "execution_seconds": describe(
-                    run.execution_seconds for run in sample if run.execution_seconds is not None
+                    run.execution_seconds
+                    for run in observed
+                    if run.execution_seconds is not None
                 ).to_dict(),
                 "first_feasible_seconds": describe(
-                    run.first_feasible_seconds for run in feasible if run.first_feasible_seconds is not None
+                    run.first_feasible_seconds
+                    for run in feasible
+                    if run.first_feasible_seconds is not None
                 ).to_dict(),
                 "soft_penalty": describe(
-                    run.objective_value for run in feasible if run.objective_value is not None
+                    run.objective_value
+                    for run in feasible
+                    if run.objective_value is not None
                 ).to_dict(),
             }
         cp_penalties = [
-            run.objective_value for run in runs.filter(
-                algorithm=models.SolverAlgorithm.CP_SAT, objective_value__isnull=False
-            )
+            run.objective_value
+            for run in planned_runs
+            if run.algorithm == models.SolverAlgorithm.CP_SAT
+            and run.status in {models.RunStatus.FEASIBLE, models.RunStatus.OPTIMAL}
+            and run.objective_value is not None
         ]
         ga_penalties = [
-            run.objective_value for run in runs.filter(
-                algorithm=models.SolverAlgorithm.GENETIC_ALGORITHM, objective_value__isnull=False
-            )
+            run.objective_value
+            for run in planned_runs
+            if run.algorithm == models.SolverAlgorithm.GENETIC_ALGORITHM
+            and run.status in {models.RunStatus.FEASIBLE, models.RunStatus.OPTIMAL}
+            and run.objective_value is not None
         ]
+        payload["scope"] = scope
         payload["effect_sizes"] = {
             "cp_sat_probability_lower_penalty": (
                 vargha_delaney_a12(cp_penalties, ga_penalties) if cp_penalties and ga_penalties else None
