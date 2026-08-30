@@ -252,6 +252,8 @@ tests/          model, service, statistical, and solver verification
 - [Controlled experiment protocol](docs/experiment-protocol.md)
 - [Development and acceptance roadmap](docs/development-roadmap.md)
 - [Thesis defense notes](docs/thesis-defense.md)
+- [Thesis validation report](docs/thesis-validation-report.md)
+- [Usability validation kit](docs/usability-test-kit.md)
 
 ## Research and operational limits
 

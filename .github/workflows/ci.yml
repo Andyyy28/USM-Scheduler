@@ -72,7 +72,7 @@ jobs:
       - name: Verify dependency consistency
         run: python -m pip check
       - name: Install browser for end-to-end tests
-        run: python -m playwright install --with-deps --no-shell chromium
+        run: python -m playwright install --with-deps --no-shell chromium firefox
       - name: Lint Python
         run: ruff check .
       - name: Check Django configuration
@@ -91,7 +91,7 @@ jobs:
       - name: Validate static asset collection
         run: python manage.py collectstatic --noinput
       - name: Run test suite
-        run: pytest --cov=scheduler --cov-report=term-missing --cov-report=xml
+        run: pytest --cov=scheduler --cov-report=term-missing --cov-report=xml --cov-fail-under=70
       - name: Upload coverage
         if: always()
         uses: actions/upload-artifact@v4
