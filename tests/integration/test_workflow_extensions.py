@@ -249,19 +249,43 @@ def test_authenticated_operator_pages_render_current_contracts() -> None:
         "scheduler:imports",
         "scheduler:reviews",
         "scheduler:help",
+        "scheduler:research",
         "scheduler:run-comparison",
     ):
         response = client.get(reverse(route))
         assert response.status_code == 200, route
     assert reverse("api:import-preview") in client.get(reverse("scheduler:imports")).content.decode()
     terms_html = client.get(reverse("scheduler:terms")).content.decode()
-    assert "Clone a semester planning base" in terms_html
+    assert "Copy semester data for editing" in terms_html
     runs_html = client.get(reverse("scheduler:runs")).content.decode()
-    assert "Check and freeze the scheduling data" in runs_html
-    assert "controlled 30-seed algorithm comparison" in runs_html
+    assert "Make sure the semester is ready" in runs_html
+    assert "Create the 30-seed algorithm comparison" not in runs_html
+    research_html = client.get(reverse("scheduler:research")).content.decode()
+    assert "Create the 30-seed algorithm comparison" in research_html
     help_html = client.get(reverse("scheduler:help")).content.decode()
     assert reverse("api:trial-workbook") in help_html
-    assert "Seven controlled steps" in help_html
+    assert "How can we help?" in help_html
+
+
+def test_navigation_and_help_are_role_aware() -> None:
+    identifiers = _seed()
+    client = Client()
+
+    reviewer = models.User.objects.get(pk=identifiers["reviewer_user_id"])
+    client.force_login(reviewer)
+    reviewer_dashboard = client.get(reverse("scheduler:dashboard")).content.decode()
+    reviewer_help = client.get(reverse("scheduler:help")).content.decode()
+    assert "Prepare Data" not in reviewer_dashboard
+    assert "Generate Schedule" in reviewer_dashboard
+    assert "Research tools" in reviewer_dashboard
+    assert "Prepare a semester" not in reviewer_help
+    assert "Review a schedule" in reviewer_help
+
+    administrator = models.User.objects.get(pk=identifiers["admin_user_id"])
+    client.force_login(administrator)
+    admin_dashboard = client.get(reverse("scheduler:dashboard")).content.decode()
+    assert "Prepare Data" in admin_dashboard
+    assert "Five steps to an approved timetable" in admin_dashboard
 
 
 def test_running_solver_cancellation_terminates_the_dedicated_worker_task(monkeypatch) -> None:

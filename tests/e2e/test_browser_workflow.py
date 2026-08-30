@@ -144,10 +144,10 @@ def test_central_scheduler_can_sign_in_and_open_semester_import(live_server) -> 
         page.get_by_label("Password").fill("browser-test-password")
         page.get_by_role("button", name="Sign in").click()
 
-        expect(page.get_by_role("heading", name="Welcome, browser-central.")).to_be_visible()
-        page.get_by_role("link", name="Data import").first.click()
-        expect(page.get_by_role("heading", name="Prepare scheduling data")).to_be_visible()
-        expect(page.get_by_role("link", name="Download test workbook")).to_be_visible()
+        expect(page.get_by_role("heading", name="Good day, browser-central.")).to_be_visible()
+        page.get_by_role("link", name="Prepare Data").first.click()
+        expect(page.get_by_role("heading", name="Prepare semester information")).to_be_visible()
+        expect(page.get_by_role("link", name="Download practice workbook")).to_be_visible()
         expect(page.locator("[data-file-drop]")).to_be_visible()
         expect(page.locator('input[type="file"]')).to_be_attached()
         browser.close()
@@ -175,7 +175,7 @@ def test_navigation_drawer_breakpoints_focus_and_mobile_widths(live_server) -> N
         page.get_by_label("Username").fill("browser-drawer")
         page.get_by_label("Password").fill("browser-test-password")
         page.get_by_role("button", name="Sign in").click()
-        expect(page.get_by_role("heading", name="Welcome, browser-drawer.")).to_be_visible()
+        expect(page.get_by_role("heading", name="Good day, browser-drawer.")).to_be_visible()
 
         menu = page.get_by_role("button", name="Open navigation")
         close = page.get_by_role("button", name="Close navigation")
@@ -202,7 +202,7 @@ def test_navigation_drawer_breakpoints_focus_and_mobile_widths(live_server) -> N
         expect(sidebar).to_have_attribute("aria-modal", "true")
         expect(page_shell).to_have_attribute("aria-hidden", "true")
         page.keyboard.press("Shift+Tab")
-        expect(page.get_by_role("link", name="Help & user guide")).to_be_focused()
+        expect(page.get_by_role("link", name="Research tools")).to_be_focused()
         page.keyboard.press("Tab")
         expect(close).to_be_focused()
         page.keyboard.press("Escape")
@@ -268,12 +268,51 @@ def test_narrow_navigation_remains_available_without_javascript(live_server) -> 
         page.get_by_label("Password").fill("browser-test-password")
         page.get_by_role("button", name="Sign in").click(force=True)
 
-        expect(page.get_by_role("heading", name="Welcome, browser-no-js.")).to_be_visible()
+        expect(page.get_by_role("heading", name="Good day, browser-no-js.")).to_be_visible()
         expect(page.locator(".menu-button")).to_be_hidden()
         expect(page.locator("#site-navigation")).to_be_visible()
-        page.get_by_role("link", name="Academic terms").click()
-        expect(page.get_by_role("heading", name="Academic terms", exact=True)).to_be_visible()
+        page.get_by_role("link", name="Academic Terms").click()
+        expect(page.get_by_role("heading", name="Choose the scheduling semester")).to_be_visible()
         context.close()
+        browser.close()
+
+
+def test_help_page_is_readable_at_desktop_laptop_and_mobile_widths(live_server) -> None:  # type: ignore[no-untyped-def]
+    models.User.objects.create_user(
+        username="browser-help",
+        password="browser-test-password",
+        role=models.UserRole.CENTRAL_SCHEDULER,
+    )
+
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=True, channel="chromium")
+        page = browser.new_page(viewport={"width": 1920, "height": 1080})
+        page.goto(live_server.url, wait_until="networkidle")
+        page.get_by_label("Username").fill("browser-help")
+        page.get_by_label("Password").fill("browser-test-password")
+        page.get_by_role("button", name="Sign in").click()
+        page.goto(f"{live_server.url}/help/", wait_until="networkidle")
+
+        expect(page.get_by_role("heading", name="How can we help?")).to_be_visible()
+        expect(page.get_by_role("navigation", name="Help topics")).to_be_visible()
+        expect(page.get_by_role("heading", name="Set up the semester and its data")).to_be_visible()
+        assert page.locator(".guide-layout").evaluate(
+            "element => getComputedStyle(element).gridTemplateColumns.split(' ').length"
+        ) == 2
+        assert page.evaluate(
+            "document.documentElement.scrollWidth <= document.documentElement.clientWidth"
+        )
+
+        for width in (1366, 1024, 768, 375, 320):
+            page.set_viewport_size({"width": width, "height": 900})
+            assert page.evaluate(
+                "document.documentElement.scrollWidth <= document.documentElement.clientWidth"
+            )
+            expect(page.get_by_role("heading", name="How can we help?")).to_be_visible()
+
+        assert page.locator(".guide-layout").evaluate(
+            "element => getComputedStyle(element).gridTemplateColumns.split(' ').length"
+        ) == 1
         browser.close()
 
 

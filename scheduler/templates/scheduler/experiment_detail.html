@@ -3,7 +3,7 @@
 {% block content %}
 <header class="page-header">
   <div><p class="eyebrow">Research report</p><h1>Controlled algorithm comparison</h1><p>Feasibility is interpreted before schedule quality or speed, using one frozen snapshot and independent validation.</p></div>
-  <div class="page-actions"><a class="button button--secondary" href="{% url 'scheduler:runs' %}">Back to runs</a>{% if batch %}<a class="button button--secondary" href="{% url 'api:experiment-export' batch.id 'csv' %}">Trial CSV</a><a class="button button--primary" href="{% url 'api:experiment-export' batch.id 'json' %}">Full JSON</a>{% endif %}</div>
+  <div class="page-actions"><a class="button button--secondary" href="{% url 'scheduler:research' %}">Back to Research tools</a>{% if batch %}<a class="button button--secondary" href="{% url 'api:experiment-export' batch.id 'csv' %}">Trial CSV</a><a class="button button--primary" href="{% url 'api:experiment-export' batch.id 'json' %}">Full JSON</a>{% endif %}</div>
 </header>
 
 {% if batch and summary %}
@@ -154,5 +154,5 @@
 <section class="panel"><div class="panel__header"><div><p class="eyebrow">Weight robustness</p><h2>Objective sensitivity</h2></div></div>{% if summary.objective_weight_sensitivity.available %}<p>Nominal lower-penalty winner: <strong>{{ summary.objective_weight_sensitivity.nominal.winner|default:'Tie' }}</strong>.</p><p>{% if summary.objective_weight_sensitivity.nominal_winner_changes %}At least one prespecified 0.5&times;/2&times; weight scenario changes the nominal winner; interpret the conclusion as weight-sensitive.{% else %}No tested one-at-a-time weight scenario changes the nominal winner.{% endif %}</p>{% else %}<p>Sensitivity becomes available after both algorithms produce feasible schedules with stored component scores.</p>{% endif %}</section></div>
 
 <section class="callout callout--info"><div><strong>No winner is forced.</strong><p>The decision applies the preregistered lexicographic rule: meaningful feasibility evidence first, then common raw feasible-schedule penalty, then RMST time to feasibility. A time-limited CP-SAT result is not labeled optimal unless the solver proved it.</p></div></section>
-{% else %}<section class="empty-state empty-state--prominent"><div><h2>Experiment report unavailable</h2><p>No batch with identifier {{ experiment_id }} is available, or its report could not be computed.</p></div><a class="button button--primary" href="{% url 'scheduler:runs' %}">Return to runs</a></section>{% endif %}
+{% else %}<section class="empty-state empty-state--prominent"><div><h2>Experiment report unavailable</h2><p>No batch with identifier {{ experiment_id }} is available, or its report could not be computed.</p></div><a class="button button--primary" href="{% url 'scheduler:research' %}">Return to Research tools</a></section>{% endif %}
 {% endblock %}
