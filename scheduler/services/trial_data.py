@@ -10,9 +10,51 @@ from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
 from openpyxl import load_workbook
 from openpyxl.styles import Font, PatternFill
 
+from scheduler import models
 from scheduler.services.imports import build_import_template
 
-TRIAL_WORKBOOK_FILENAME = "USM-Scheduler-Synthetic-Trial-v1.xlsx"
+TRIAL_WORKBOOK_FILENAME = "USM-Scheduler-Synthetic-Trial-v2.xlsx"
+TRIAL_FIXED_RULE_CODE = "FIXED_STUDENT_LIMIT_50"
+TRIAL_DAILY_LOAD_RULE_CODE = "INSTRUCTOR_DAILY_LOAD"
+TRIAL_RESERVED_BLOCK_RULE_CODE = "RECURRING_RESERVED_BLOCKS"
+
+
+class TrialPolicyConfigurationError(ValueError):
+    """Raised when a target term lacks the approved policies used by the fixture."""
+
+
+def approved_trial_policy_hashes(term: models.AcademicTerm) -> dict[str, str]:
+    """Resolve approved term-bound policy hashes without creating or approving policy."""
+
+    requirements = {
+        "fixed_rule_hash": TRIAL_FIXED_RULE_CODE,
+        "daily_load_rule_hash": TRIAL_DAILY_LOAD_RULE_CODE,
+        "reserved_block_rule_hash": TRIAL_RESERVED_BLOCK_RULE_CODE,
+    }
+    resolved: dict[str, str] = {}
+    missing: list[str] = []
+    for output_key, rule_code in requirements.items():
+        policy = models.ConstraintPolicyVersion.objects.filter(
+            effective_term=term,
+            rule_code=rule_code,
+            version=1,
+            is_approved=True,
+            classification=models.ConstraintKind.HARD,
+        ).first()
+        if policy is None:
+            missing.append(f"{rule_code} v1")
+            continue
+        if rule_code == TRIAL_FIXED_RULE_CODE and policy.parameters.get("fixed_student_limit") != 50:
+            missing.append(f"{rule_code} v1 with fixed_student_limit=50")
+            continue
+        resolved[output_key] = policy.policy_hash
+    if missing:
+        raise TrialPolicyConfigurationError(
+            "The selected term is missing approved synthetic-fixture policy evidence: "
+            + ", ".join(missing)
+            + ". Ask an authorized scheduler to approve these policies before downloading the fixture."
+        )
+    return resolved
 
 
 def _canonicalize_xlsx(content: bytes) -> bytes:
@@ -67,7 +109,13 @@ def _time_atoms() -> list[list[object]]:
     return rows
 
 
-def build_trial_workbook_bytes(*, campus: str = "Kabacan") -> bytes:
+def build_trial_workbook_bytes(
+    *,
+    fixed_rule_hash: str,
+    daily_load_rule_hash: str,
+    reserved_block_rule_hash: str,
+    campus: str = "Kabacan",
+) -> bytes:
     """Return a realistic but wholly synthetic one-campus scheduling dataset.
 
     The workbook deliberately covers the rules most useful in a thesis trial:
@@ -75,6 +123,15 @@ def build_trial_workbook_bytes(*, campus: str = "Kabacan") -> bytes:
     a shared offering, team teaching, restricted availability, preferences,
     repeated meetings on distinct days, and one valid locked placement.
     """
+
+    for label, value in (
+        ("fixed_rule_hash", fixed_rule_hash),
+        ("daily_load_rule_hash", daily_load_rule_hash),
+        ("reserved_block_rule_hash", reserved_block_rule_hash),
+    ):
+        normalized = str(value).strip().lower()
+        if len(normalized) != 64 or any(character not in "0123456789abcdef" for character in normalized):
+            raise ValueError(f"{label} must be a 64-character SHA-256 value.")
 
     workbook = load_workbook(BytesIO(build_import_template()))
     fixed_timestamp = datetime(2000, 1, 1)
@@ -125,11 +182,11 @@ def build_trial_workbook_bytes(*, campus: str = "Kabacan") -> bytes:
             ["SYN-BSIT", "TGE101", "2026-TEST", "GE", "SYN-CASS", "SYN-DCOMM", True],
         ],
         "Sections": [
-            ["SYN-BSCS-1A", "SYN-BSCS", 1, "INCOMING", True],
-            ["SYN-BSCS-1B", "SYN-BSCS", 1, "INCOMING", True],
-            ["SYN-BSCS-2A", "SYN-BSCS", 2, "CONTINUING", True],
-            ["SYN-BSCS-4A", "SYN-BSCS", 4, "GRADUATING", True],
-            ["SYN-BSIT-1A", "SYN-BSIT", 1, "INCOMING", True],
+            ["SYN-BSCS-1A", "SYN-BSCS", 1, "INCOMING", 25, True],
+            ["SYN-BSCS-1B", "SYN-BSCS", 1, "INCOMING", 49, True],
+            ["SYN-BSCS-2A", "SYN-BSCS", 2, "CONTINUING", 50, True],
+            ["SYN-BSCS-4A", "SYN-BSCS", 4, "GRADUATING", 30, True],
+            ["SYN-BSIT-1A", "SYN-BSIT", 1, "INCOMING", 25, True],
         ],
         "Instructors": [
             ["SYN-FAC-001", "Synthetic Faculty 01", "SYN-DCS", True, True],
@@ -232,6 +289,19 @@ def build_trial_workbook_bytes(*, campus: str = "Kabacan") -> bytes:
             ["SYN-CS102-1B-LAB", "COMPUTER_LAB"],
         ],
         "InstructorAvailability": [],
+        "ConstraintPolicyReferences": [
+            [TRIAL_FIXED_RULE_CODE, 1, fixed_rule_hash.lower()],
+            [TRIAL_DAILY_LOAD_RULE_CODE, 1, daily_load_rule_hash.lower()],
+            [TRIAL_RESERVED_BLOCK_RULE_CODE, 1, reserved_block_rule_hash.lower()],
+        ],
+        "InstructorProfiles": [
+            ["SYN-FAC-001", 10, False, TRIAL_DAILY_LOAD_RULE_CODE, 1],
+            ["SYN-FAC-002", 10, False, TRIAL_DAILY_LOAD_RULE_CODE, 1],
+            ["SYN-FAC-003", 10, False, TRIAL_DAILY_LOAD_RULE_CODE, 1],
+            ["SYN-FAC-004", 8, False, TRIAL_DAILY_LOAD_RULE_CODE, 1],
+            ["SYN-FAC-005", 10, False, TRIAL_DAILY_LOAD_RULE_CODE, 1],
+            ["SYN-FAC-006", 10, False, TRIAL_DAILY_LOAD_RULE_CODE, 1],
+        ],
         "RoomAvailability": [],
         "Students": [],
         "StudentSections": [],
@@ -256,6 +326,19 @@ def build_trial_workbook_bytes(*, campus: str = "Kabacan") -> bytes:
                 "Synthetic approved project block for lock testing",
             ]
         ],
+        "ReservedBlocks": [
+            [
+                "SYN-INSTITUTION-FRIDAY-CLOSE",
+                "INSTITUTION",
+                "",
+                TRIAL_RESERVED_BLOCK_RULE_CODE,
+                1,
+                "Synthetic institution close",
+                "Fictional recurring block used to exercise thesis-v2 provenance.",
+                True,
+            ]
+        ],
+        "ReservedBlockSlots": [["SYN-INSTITUTION-FRIDAY-CLOSE", 4, 17]],
     }
 
     # Synthetic Faculty 04 is available on Monday, Wednesday, and Friday only.
@@ -280,16 +363,24 @@ def build_trial_workbook_bytes(*, campus: str = "Kabacan") -> bytes:
     # comments would interfere with the strict schema. Workbook metadata and the
     # distinctive SYN-/TEST- identifiers instead keep the status machine-readable.
     schema_sheet = workbook["_Schema"]
-    schema_sheet["A3"] = "dataset_notice"
-    schema_sheet["B3"] = "SYNTHETIC TEST DATA ONLY - NOT OFFICIAL USM RECORDS"
-    schema_sheet["A3"].font = Font(bold=True, color="9C2C2C")
-    schema_sheet["B3"].font = Font(bold=True, color="9C2C2C")
-    schema_sheet["A3"].fill = PatternFill(fill_type="solid", fgColor="FFF1F0")
-    schema_sheet["B3"].fill = PatternFill(fill_type="solid", fgColor="FFF1F0")
+    schema_sheet["A5"] = "dataset_notice"
+    schema_sheet["B5"] = "SYNTHETIC TEST DATA ONLY - NOT OFFICIAL USM RECORDS"
+    schema_sheet["A5"].font = Font(bold=True, color="9C2C2C")
+    schema_sheet["B5"].font = Font(bold=True, color="9C2C2C")
+    schema_sheet["A5"].fill = PatternFill(fill_type="solid", fgColor="FFF1F0")
+    schema_sheet["B5"].fill = PatternFill(fill_type="solid", fgColor="FFF1F0")
 
     output = BytesIO()
     workbook.save(output)
     return _canonicalize_xlsx(output.getvalue())
 
 
-__all__ = ["TRIAL_WORKBOOK_FILENAME", "build_trial_workbook_bytes"]
+__all__ = [
+    "TRIAL_DAILY_LOAD_RULE_CODE",
+    "TRIAL_FIXED_RULE_CODE",
+    "TRIAL_RESERVED_BLOCK_RULE_CODE",
+    "TRIAL_WORKBOOK_FILENAME",
+    "TrialPolicyConfigurationError",
+    "approved_trial_policy_hashes",
+    "build_trial_workbook_bytes",
+]

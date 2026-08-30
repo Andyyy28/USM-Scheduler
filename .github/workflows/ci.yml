@@ -66,11 +66,21 @@ jobs:
           cache-dependency-path: |
             requirements.txt
             requirements-lock.txt
+            requirements-hashed.txt
             requirements-dev.txt
+      - name: Install hash-verified runtime closure
+        run: python -m pip install --require-hashes --only-binary=:all: --requirement requirements-hashed.txt
       - name: Install dependencies
         run: python -m pip install --requirement requirements-dev.txt
       - name: Verify dependency consistency
         run: python -m pip check
+      - name: Audit locked runtime dependencies
+        run: >-
+          python -m pip_audit
+          --requirement requirements-lock.txt
+          --no-deps
+          --disable-pip
+          --progress-spinner off
       - name: Install browser for end-to-end tests
         run: python -m playwright install --with-deps --no-shell chromium firefox
       - name: Lint Python

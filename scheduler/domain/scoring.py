@@ -11,10 +11,12 @@ from .contracts import (
     ObjectiveBreakdown,
     ProblemInstance,
 )
+from .prepared import PreparedProblem
 
 
 def score_schedule(
-    problem: ProblemInstance, assignments: tuple[Assignment, ...] | list[Assignment]
+    problem: ProblemInstance, assignments: tuple[Assignment, ...] | list[Assignment],
+    *, prepared: PreparedProblem | None = None,
 ) -> ObjectiveBreakdown:
     """Return the shared lower-is-better soft objective.
 
@@ -28,7 +30,7 @@ def score_schedule(
     proportional to absolute deviation from the weekly-load-per-day target.
     """
 
-    resolved = resolve_assignments(problem, assignments)
+    resolved = resolve_assignments(problem, assignments, prepared=prepared)
     preference_penalty = sum(candidate.preference_penalty for candidate in resolved.values())
 
     section_occupancy: dict[tuple[str, str], set[str]] = defaultdict(set)
@@ -52,10 +54,11 @@ def score_schedule(
             )
             instructor_day_load[(instructor_id, candidate.day_id)] += duration
 
-    section_gap_atoms = _count_internal_gaps(problem, section_occupancy)
-    instructor_gap_atoms = _count_internal_gaps(problem, instructor_occupancy)
-    load_imbalance = _load_imbalance(problem.day_ids, section_ids, section_day_load)
-    load_imbalance += _load_imbalance(problem.day_ids, instructor_ids, instructor_day_load)
+    section_gap_atoms = _count_internal_gaps(problem, section_occupancy, prepared=prepared)
+    instructor_gap_atoms = _count_internal_gaps(problem, instructor_occupancy, prepared=prepared)
+    day_ids = prepared.day_ids if prepared is not None else problem.day_ids
+    load_imbalance = _load_imbalance(day_ids, section_ids, section_day_load)
+    load_imbalance += _load_imbalance(day_ids, instructor_ids, instructor_day_load)
 
     profile = problem.objective_profile
     weighted_total = (
@@ -98,11 +101,14 @@ def score_schedule(
 
 
 def resolve_assignments(
-    problem: ProblemInstance, assignments: Iterable[Assignment]
+    problem: ProblemInstance, assignments: Iterable[Assignment],
+    *, prepared: PreparedProblem | None = None,
 ) -> dict[str, CandidatePlacement]:
     """Resolve a complete assignment vector or raise a precise ``ValueError``."""
 
-    event_map = problem.event_map
+    if prepared is not None:
+        prepared.require_problem(problem)
+    event_map = prepared.event_map if prepared is not None else problem.event_map
     selected: dict[str, CandidatePlacement] = {}
     for assignment in assignments:
         event = event_map.get(assignment.event_id)
@@ -110,7 +116,8 @@ def resolve_assignments(
             raise ValueError(f"assignment references unknown event {assignment.event_id!r}")
         if assignment.event_id in selected:
             raise ValueError(f"event {assignment.event_id!r} has multiple assignments")
-        candidate = event.candidate_map.get(assignment.candidate_id)
+        candidates = prepared.candidates[event.event_id] if prepared is not None else event.candidate_map
+        candidate = candidates.get(assignment.candidate_id)
         if candidate is None:
             raise ValueError(
                 f"candidate {assignment.candidate_id!r} is invalid for event "
@@ -125,8 +132,16 @@ def resolve_assignments(
 
 
 def _count_internal_gaps(
-    problem: ProblemInstance, occupancy: dict[tuple[str, str], set[str]]
+    problem: ProblemInstance, occupancy: dict[tuple[str, str], set[str]],
+    *, prepared: PreparedProblem | None = None,
 ) -> int:
+    if prepared is not None:
+        total = 0
+        for occupied_ids in occupancy.values():
+            if len(occupied_ids) >= 2:
+                positions = [prepared.atom_positions[atom_id] for atom_id in occupied_ids]
+                total += max(positions) - min(positions) + 1 - len(positions)
+        return total
     ordered_atoms: dict[str, list[str]] = defaultdict(list)
     for atom in sorted(problem.time_atoms, key=lambda item: (item.day_index, item.order, item.atom_id)):
         ordered_atoms[atom.day_id].append(atom.atom_id)

@@ -94,7 +94,10 @@ USE_TZ = True
 
 STATIC_URL = "static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
-STATICFILES_STORAGE = "whitenoise.storage.CompressedManifestStaticFilesStorage"
+STORAGES = {
+    "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
+    "staticfiles": {"BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage"},
+}
 MEDIA_URL = "media/"
 MEDIA_ROOT = BASE_DIR / "media"
 
@@ -115,9 +118,33 @@ REST_FRAMEWORK = {
 CELERY_BROKER_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 CELERY_RESULT_BACKEND = CELERY_BROKER_URL
 CELERY_TASK_TRACK_STARTED = True
-CELERY_TASK_TIME_LIMIT = int(os.getenv("CELERY_TASK_TIME_LIMIT", "360"))
+SCHEDULE_RUN_INFRASTRUCTURE_GRACE_SECONDS = int(
+    os.getenv("SCHEDULE_RUN_INFRASTRUCTURE_GRACE_SECONDS", "60")
+)
+# Per-dispatch limits are the frozen solver deadline plus the 60-second
+# infrastructure grace. This ceiling also permits the excluded 1800-second
+# CP-SAT feasibility diagnostic.
+CELERY_TASK_TIME_LIMIT = int(os.getenv("CELERY_TASK_TIME_LIMIT", "1860"))
 CELERY_TASK_ALWAYS_EAGER = env_bool("CELERY_TASK_ALWAYS_EAGER", DEBUG and not os.getenv("REDIS_URL"))
 CELERY_TASK_EAGER_PROPAGATES = True
+CELERY_TASK_DEFAULT_QUEUE = "default"
+CELERY_TASK_CREATE_MISSING_QUEUES = True
+CELERY_WORKER_PREFETCH_MULTIPLIER = 1
+CELERY_WORKER_CANCEL_LONG_RUNNING_TASKS_ON_CONNECTION_LOSS = True
+CELERY_BROKER_TRANSPORT_OPTIONS = {
+    "visibility_timeout": int(os.getenv("CELERY_VISIBILITY_TIMEOUT_SECONDS", "2100")),
+}
+CELERY_TASK_ROUTES = {
+    "scheduler.tasks.execute_schedule_run": {"queue": "default"},
+    "scheduler.tasks.reconcile_stale_schedule_runs": {"queue": "default"},
+}
+CELERY_BEAT_SCHEDULE = {
+    "reconcile-stale-schedule-run-leases": {
+        "task": "scheduler.tasks.reconcile_stale_schedule_runs",
+        "schedule": 60.0,
+        "options": {"queue": "default"},
+    },
+}
 SOLVER_DEFAULT_TIME_LIMIT_SECONDS = int(os.getenv("SOLVER_DEFAULT_TIME_LIMIT_SECONDS", "300"))
 SOLVER_MEMORY_LIMIT_MB = int(os.getenv("SOLVER_MEMORY_LIMIT_MB", "2048"))
 

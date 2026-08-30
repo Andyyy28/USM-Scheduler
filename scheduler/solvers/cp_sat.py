@@ -16,6 +16,7 @@ from scheduler.domain.contracts import (
 )
 from scheduler.domain.scoring import score_schedule
 from scheduler.domain.validation import validate_schedule
+from scheduler.solvers.tracing import IncumbentTrace
 
 try:  # Keep all other domain/GA functionality usable without this optional wheel.
     from ortools.sat.python import cp_model
@@ -25,7 +26,7 @@ except ImportError as exc:  # pragma: no cover - environment dependent
 else:
     _ORTOOLS_IMPORT_ERROR = None
 
-CP_SAT_IMPLEMENTATION_VERSION = "cp-sat-v2"
+CP_SAT_IMPLEMENTATION_VERSION = "cp-sat-v3"
 
 
 class ORToolsUnavailableError(RuntimeError):
@@ -41,16 +42,23 @@ if cp_model is not None:
             problem: ProblemInstance,
             event_order: tuple[Any, ...],
             variables: dict[tuple[str, str], Any],
+            config: SolverConfig,
         ) -> None:
             super().__init__()
             self._started_at = started_at
             self._problem = problem
             self._event_order = event_order
             self._variables = variables
+            self._deadline = started_at + config.time_limit_seconds
+            self.trace = IncumbentTrace(config.diagnostic_trace)
+            self.assignments: tuple[Assignment, ...] = ()
+            self.accepted_objective: int | None = None
+            self.best_bound: float | None = None
             self.first_feasible_seconds: float | None = None
 
         def on_solution_callback(self) -> None:
-            if self.first_feasible_seconds is not None:
+            if monotonic() > self._deadline:
+                self.StopSearch()
                 return
             assignments = tuple(
                 Assignment(event_id=event.event_id, candidate_id=candidate.candidate_id)
@@ -58,8 +66,19 @@ if cp_model is not None:
                 for candidate in event.candidates
                 if self.BooleanValue(self._variables[(event.event_id, candidate.candidate_id)])
             )
-            if validate_schedule(self._problem, assignments).feasible:
-                self.first_feasible_seconds = monotonic() - self._started_at
+            validation = validate_schedule(self._problem, assignments)
+            objective = score_schedule(self._problem, assignments) if validation.feasible else None
+            completed_at = monotonic()
+            if completed_at > self._deadline:
+                self.StopSearch()
+                return
+            if objective is not None and round(self.ObjectiveValue()) == objective.weighted_total:
+                if self.first_feasible_seconds is None:
+                    self.first_feasible_seconds = completed_at - self._started_at
+                self.assignments = assignments
+                self.accepted_objective = objective.weighted_total
+                self.best_bound = self.BestObjectiveBound()
+                self.trace.observe(completed_at - self._started_at, (0, objective.weighted_total))
 
 
 class CpSatSolver:
@@ -110,6 +129,8 @@ class CpSatSolver:
         for event_id, candidate_id in problem.lock_map.items():
             model.Add(variables[(event_id, candidate_id)] == 1)
 
+        _add_instructor_daily_load_constraints(model, problem, variables)
+
         preference_expr = sum(
             candidate.preference_penalty * variables[(event.event_id, candidate.candidate_id)]
             for event in event_order
@@ -147,19 +168,23 @@ class CpSatSolver:
         solver.parameters.max_time_in_seconds = max(1e-6, deadline - monotonic())
         solver.parameters.random_seed = config.seed
         solver.parameters.num_search_workers = config.worker_count
-        callback = _FirstFeasibleCallback(started_at, problem, event_order, variables)
+        solver.parameters.cp_model_presolve = config.cp_model_presolve
+        solver.parameters.linearization_level = config.linearization_level
+        callback = _FirstFeasibleCallback(started_at, problem, event_order, variables, config)
         cp_status = solver.Solve(model, callback)
         runtime = monotonic() - started_at
         status = _map_status(cp_status)
 
-        assignments: tuple[Assignment, ...] = ()
+        # Never use a later solver incumbent whose shared validation/scoring did
+        # not complete before the deadline. Infrastructure grace is not search time.
+        assignments = callback.assignments
         if status in (SolverStatus.OPTIMAL, SolverStatus.FEASIBLE):
-            assignments = tuple(
-                Assignment(event_id=event.event_id, candidate_id=candidate.candidate_id)
-                for event in event_order
-                for candidate in event.candidates
-                if solver.Value(variables[(event.event_id, candidate.candidate_id)]) == 1
-            )
+            if not assignments:
+                status = SolverStatus.NO_SOLUTION
+            elif runtime > config.time_limit_seconds or callback.accepted_objective != round(solver.ObjectiveValue()):
+                status = SolverStatus.FEASIBLE
+        elif status is SolverStatus.INFEASIBLE and runtime > config.time_limit_seconds:
+            status = SolverStatus.NO_SOLUTION
         validation = validate_schedule(problem, assignments)
         objective = score_schedule(problem, assignments) if validation.feasible else None
 
@@ -167,8 +192,11 @@ class CpSatSolver:
         best_bound: float | None = None
         relative_gap: float | None = None
         if status in (SolverStatus.OPTIMAL, SolverStatus.FEASIBLE):
-            objective_value = solver.ObjectiveValue()
-            best_bound = solver.BestObjectiveBound()
+            objective_value = callback.accepted_objective
+            best_bound = (
+                solver.BestObjectiveBound()
+                if runtime <= config.time_limit_seconds else callback.best_bound
+            )
             relative_gap = max(0.0, objective_value - best_bound) / max(1.0, abs(objective_value))
             if not validation.feasible:
                 status = SolverStatus.ERROR
@@ -204,7 +232,9 @@ class CpSatSolver:
             ("relative_gap", relative_gap),
             ("solver_wall_time_seconds", solver.WallTime()),
             ("worker_count", config.worker_count),
-        )
+            ("cp_model_presolve", config.cp_model_presolve),
+            ("linearization_level", config.linearization_level),
+        ) + callback.trace.metrics()
         return SolverResult(
             algorithm=self.algorithm,
             status=status,
@@ -243,6 +273,32 @@ def _resource_atom_buckets(
                 for section_id in event.section_ids:
                     buckets[("section", section_id, atom_id)].append(variable)
     return buckets
+
+
+def _add_instructor_daily_load_constraints(
+    model: Any,
+    problem: ProblemInstance,
+    variables: dict[tuple[str, str], Any],
+) -> None:
+    """Apply the same frozen per-day teaching-atom policy checked by the validator."""
+
+    limits = {
+        evidence.instructor_id: evidence.max_daily_teaching_atoms
+        for evidence in problem.instructor_evidence
+        if evidence.max_daily_teaching_atoms is not None
+    }
+    terms: dict[tuple[str, str], list[Any]] = defaultdict(list)
+    for event in problem.events:
+        for instructor_id in event.instructor_ids:
+            if instructor_id not in limits:
+                continue
+            for candidate in event.candidates:
+                terms[(instructor_id, candidate.day_id)].append(
+                    len(candidate.occupied_atom_ids)
+                    * variables[(event.event_id, candidate.candidate_id)]
+                )
+    for (instructor_id, _day_id), day_terms in sorted(terms.items()):
+        model.Add(sum(day_terms) <= limits[instructor_id])
 
 
 def _gap_expression(

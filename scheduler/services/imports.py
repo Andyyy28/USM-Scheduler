@@ -26,7 +26,9 @@ from openpyxl.worksheet.datavalidation import DataValidation
 
 from scheduler import models
 
-SCHEMA_VERSION = "1.0"
+SCHEMA_VERSION = "1.1"
+LEGACY_SCHEMA_VERSION = "1.0"
+SUPPORTED_SCHEMA_VERSIONS = (LEGACY_SCHEMA_VERSION, SCHEMA_VERSION)
 MAX_WORKBOOK_BYTES = 20 * 1024 * 1024
 MAX_ROWS_PER_SHEET = 100_000
 SCHEMA_SHEET = "_Schema"
@@ -49,6 +51,8 @@ class ColumnSpec:
     required: bool = True
     choices: tuple[str, ...] = ()
     description: str = ""
+    minimum: int | None = None
+    maximum: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,8 +69,18 @@ def _column(
     required: bool = True,
     choices: Iterable[str] = (),
     description: str = "",
+    minimum: int | None = None,
+    maximum: int | None = None,
 ) -> ColumnSpec:
-    return ColumnSpec(name, kind, required, tuple(choices), description)
+    return ColumnSpec(
+        name,
+        kind,
+        required,
+        tuple(choices),
+        description,
+        minimum,
+        maximum,
+    )
 
 
 BOOL = _column("", "boolean", required=False)
@@ -128,6 +142,16 @@ SHEET_SCHEMAS: dict[str, SheetSpec] = {
             _column("program_code"),
             _column("year_level", "integer"),
             _column("cohort_status", choices=tuple(models.CohortStatus.values)),
+            _column(
+                "expected_enrollment",
+                "integer",
+                minimum=1,
+                maximum=50,
+                description=(
+                    "Expected students in the section (1-50). This is a fixed student limit, "
+                    "not a room-capacity or chair-count field."
+                ),
+            ),
             _column("is_active", "boolean", required=False),
         ),
         ("code",),
@@ -236,6 +260,39 @@ SHEET_SCHEMAS: dict[str, SheetSpec] = {
         ),
         ("instructor_code", "day", "sequence"),
     ),
+    "ConstraintPolicyReferences": SheetSpec(
+        (
+            _column("rule_code", description="Code of an existing approved constraint policy."),
+            _column("version", "integer", minimum=1),
+            _column(
+                "policy_hash",
+                description="SHA-256 hash of the approved policy version for this term.",
+            ),
+        ),
+        ("rule_code", "version"),
+    ),
+    "InstructorProfiles": SheetSpec(
+        (
+            _column("instructor_code"),
+            _column(
+                "max_daily_teaching_atoms",
+                "integer",
+                required=False,
+                minimum=1,
+                description="Approved positive daily teaching-atom limit; blank only for no-limit.",
+            ),
+            _column(
+                "acknowledge_no_daily_limit",
+                "boolean",
+                description=(
+                    "TRUE only when the approved policy explicitly acknowledges no daily limit."
+                ),
+            ),
+            _column("daily_load_policy_rule_code"),
+            _column("daily_load_policy_version", "integer", minimum=1),
+        ),
+        ("instructor_code",),
+    ),
     "RoomAvailability": SheetSpec(
         (
             _column("room_code"),
@@ -289,10 +346,67 @@ SHEET_SCHEMAS: dict[str, SheetSpec] = {
         ("meeting_key",),
         required=False,
     ),
+    "ReservedBlocks": SheetSpec(
+        (
+            _column("block_key", description="Workbook-unique recurring reserved-block key."),
+            _column("scope", choices=tuple(models.ReservedBlockScope.values)),
+            _column(
+                "target_code",
+                required=False,
+                description=(
+                    "Blank for INSTITUTION; otherwise a college, department, program, or section code."
+                ),
+            ),
+            _column("policy_rule_code"),
+            _column("policy_version", "integer", minimum=1),
+            _column("label"),
+            _column("reason", required=False),
+            _column("is_active", "boolean", required=False),
+        ),
+        ("block_key",),
+        required=False,
+    ),
+    "ReservedBlockSlots": SheetSpec(
+        (
+            _column("block_key"),
+            _column("day", "day"),
+            _column("sequence", "integer", minimum=0),
+        ),
+        ("block_key", "day", "sequence"),
+        required=False,
+    ),
 }
 
 CORE_SHEETS = tuple(name for name, schema in SHEET_SCHEMAS.items() if schema.required)
 OPTIONAL_SHEETS = tuple(name for name, schema in SHEET_SCHEMAS.items() if not schema.required)
+
+# Schema 1.0 remains importable for historical/exploratory datasets. It did not
+# contain thesis-v2 enrollment, daily-load, policy-provenance, or reserved-block
+# fields. Formal problem preflight is responsible for rejecting those legacy
+# nulls; preserving this parser avoids invalidating historical workbooks.
+LEGACY_SHEET_SCHEMAS = {
+    name: schema
+    for name, schema in SHEET_SCHEMAS.items()
+    if name
+    not in {
+        "ConstraintPolicyReferences",
+        "InstructorProfiles",
+        "ReservedBlocks",
+        "ReservedBlockSlots",
+    }
+}
+LEGACY_SHEET_SCHEMAS["Sections"] = SheetSpec(
+    tuple(
+        column
+        for column in SHEET_SCHEMAS["Sections"].columns
+        if column.name != "expected_enrollment"
+    ),
+    ("code",),
+)
+SHEET_SCHEMAS_BY_VERSION: dict[str, Mapping[str, SheetSpec]] = {
+    LEGACY_SCHEMA_VERSION: LEGACY_SHEET_SCHEMAS,
+    SCHEMA_VERSION: SHEET_SCHEMAS,
+}
 
 DAY_NAMES = {
     "MONDAY": 0,
@@ -417,6 +531,15 @@ def _normalize_cell(value: Any, spec: ColumnSpec) -> Any:
         if choice not in spec.choices:
             raise ValueError(f"Choose one of: {', '.join(spec.choices)}.")
         normalized = choice
+    if isinstance(normalized, int) and not isinstance(normalized, bool):
+        if spec.minimum is not None and normalized < spec.minimum:
+            if spec.maximum is not None:
+                raise ValueError(f"Enter a whole number from {spec.minimum} to {spec.maximum}.")
+            raise ValueError(f"Enter a whole number of at least {spec.minimum}.")
+        if spec.maximum is not None and normalized > spec.maximum:
+            if spec.minimum is not None:
+                raise ValueError(f"Enter a whole number from {spec.minimum} to {spec.maximum}.")
+            raise ValueError(f"Enter a whole number no greater than {spec.maximum}.")
     return normalized
 
 
@@ -434,17 +557,21 @@ def _read_schema_version(workbook: Any, issues: list[Issue]) -> str | None:
     sheet = workbook[SCHEMA_SHEET]
     key = sheet["A1"].value
     value = sheet["B1"].value
-    if key != "schema_version" or str(value).strip() != SCHEMA_VERSION:
+    normalized = str(value).strip() if value is not None else None
+    if key != "schema_version" or normalized not in SUPPORTED_SCHEMA_VERSIONS:
         _issue(
             issues,
             SCHEMA_SHEET,
             1,
             "schema_version",
             "UNSUPPORTED_SCHEMA_VERSION",
-            f"Expected schema version {SCHEMA_VERSION}; received {value!r}.",
+            (
+                f"Expected a supported schema version ({', '.join(SUPPORTED_SCHEMA_VERSIONS)}); "
+                f"received {value!r}."
+            ),
         )
-        return str(value).strip() if value is not None else None
-    return SCHEMA_VERSION
+        return normalized
+    return normalized
 
 
 def _parse_sheet(workbook: Any, name: str, schema: SheetSpec, issues: list[Issue]) -> list[ParsedRow]:
@@ -637,6 +764,20 @@ def _validate_references(rows: Mapping[str, list[ParsedRow]], issues: list[Issue
             ("employee_code",),
             False,
         ),
+        (
+            "InstructorProfiles",
+            ("instructor_code",),
+            "Instructors",
+            ("employee_code",),
+            False,
+        ),
+        (
+            "InstructorProfiles",
+            ("daily_load_policy_rule_code", "daily_load_policy_version"),
+            "ConstraintPolicyReferences",
+            ("rule_code", "version"),
+            False,
+        ),
         ("RoomAvailability", ("room_code",), "Rooms", ("code",), False),
         ("Students", (), "Students", (), True),
         (
@@ -657,6 +798,20 @@ def _validate_references(rows: Mapping[str, list[ParsedRow]], issues: list[Issue
         ("LaboratoryProfiles", ("room_code",), "Rooms", ("code",), False),
         ("Locks", ("meeting_key",), "MeetingRequirements", ("meeting_key",), False),
         ("Locks", ("room_code",), "Rooms", ("code",), False),
+        (
+            "ReservedBlocks",
+            ("policy_rule_code", "policy_version"),
+            "ConstraintPolicyReferences",
+            ("rule_code", "version"),
+            False,
+        ),
+        (
+            "ReservedBlockSlots",
+            ("block_key",),
+            "ReservedBlocks",
+            ("block_key",),
+            False,
+        ),
     )
     for sheet, columns, target_sheet, target_columns, optional in references:
         if columns:
@@ -671,7 +826,13 @@ def _validate_references(rows: Mapping[str, list[ParsedRow]], issues: list[Issue
             )
 
     slot_keys = _row_index(rows, "TimeSlots", ("day", "sequence"))
-    for sheet in ("InstructorAvailability", "RoomAvailability", "InstructorPreferences", "Locks"):
+    for sheet in (
+        "InstructorAvailability",
+        "RoomAvailability",
+        "InstructorPreferences",
+        "Locks",
+        "ReservedBlockSlots",
+    ):
         for row in rows.get(sheet, []):
             key = (row.values["day"], row.values["sequence"])
             if key not in slot_keys:
@@ -685,8 +846,14 @@ def _validate_references(rows: Mapping[str, list[ParsedRow]], issues: list[Issue
                 )
 
 
-def _validate_semantics(rows: Mapping[str, list[ParsedRow]], term: models.AcademicTerm, issues: list[Issue]) -> None:
-    minimum_rows = (
+def _validate_semantics(
+    rows: Mapping[str, list[ParsedRow]],
+    term: models.AcademicTerm,
+    issues: list[Issue],
+    *,
+    schema_version: str | None,
+) -> None:
+    minimum_rows: tuple[str, ...] = (
         "Colleges",
         "Departments",
         "Programs",
@@ -701,6 +868,8 @@ def _validate_semantics(rows: Mapping[str, list[ParsedRow]], term: models.Academ
         "OfferingInstructors",
         "MeetingRequirements",
     )
+    if schema_version == SCHEMA_VERSION:
+        minimum_rows += ("ConstraintPolicyReferences", "InstructorProfiles")
     for sheet in minimum_rows:
         if not rows.get(sheet):
             _issue(
@@ -716,6 +885,164 @@ def _validate_semantics(rows: Mapping[str, list[ParsedRow]], term: models.Academ
     sections = {row.values["code"]: row.values["program_code"] for row in rows["Sections"]}
     offerings = {row.values["external_key"]: row.values for row in rows["CourseOfferings"]}
     room_kinds = {row.values["code"]: row.values["kind"] for row in rows["Rooms"]}
+
+    policy_rows: dict[tuple[str, int], ParsedRow] = {
+        (row.values["rule_code"], row.values["version"]): row
+        for row in rows.get("ConstraintPolicyReferences", [])
+    }
+    for key, row in policy_rows.items():
+        supplied_hash = row.values["policy_hash"].lower()
+        if len(supplied_hash) != 64 or any(character not in "0123456789abcdef" for character in supplied_hash):
+            _issue(
+                issues,
+                "ConstraintPolicyReferences",
+                row.row_number,
+                "policy_hash",
+                "INVALID_POLICY_HASH",
+                "Enter the 64-character SHA-256 hash of the approved policy version.",
+            )
+            continue
+        policy = models.ConstraintPolicyVersion.objects.filter(
+            rule_code=key[0],
+            version=key[1],
+            effective_term=term,
+        ).first()
+        if policy is None:
+            _issue(
+                issues,
+                "ConstraintPolicyReferences",
+                row.row_number,
+                "rule_code,version",
+                "UNKNOWN_POLICY_VERSION",
+                "No constraint-policy version with this code, version, and effective term exists.",
+            )
+            continue
+        if not policy.is_approved:
+            _issue(
+                issues,
+                "ConstraintPolicyReferences",
+                row.row_number,
+                "rule_code,version",
+                "UNAPPROVED_POLICY_VERSION",
+                "The referenced constraint-policy version is not approved.",
+            )
+        if policy.policy_hash != supplied_hash:
+            _issue(
+                issues,
+                "ConstraintPolicyReferences",
+                row.row_number,
+                "policy_hash",
+                "POLICY_HASH_MISMATCH",
+                "The supplied hash does not match the approved constraint-policy version.",
+            )
+        if policy.classification != models.ConstraintKind.HARD:
+            _issue(
+                issues,
+                "ConstraintPolicyReferences",
+                row.row_number,
+                "rule_code,version",
+                "POLICY_NOT_HARD",
+                "Daily-load and reserved-block references must use a hard-constraint policy.",
+            )
+
+    if schema_version == SCHEMA_VERSION:
+        active_instructors = {
+            row.values["employee_code"]
+            for row in rows["Instructors"]
+            if row.values.get("is_active") is not False
+        }
+        profile_codes = {row.values["instructor_code"] for row in rows["InstructorProfiles"]}
+        for instructor_code in sorted(active_instructors - profile_codes):
+            instructor_row = next(
+                row for row in rows["Instructors"] if row.values["employee_code"] == instructor_code
+            )
+            _issue(
+                issues,
+                "Instructors",
+                instructor_row.row_number,
+                "employee_code",
+                "MISSING_INSTRUCTOR_PROFILE",
+                "Every active instructor requires one InstructorProfiles row.",
+            )
+        for row in rows["InstructorProfiles"]:
+            maximum = row.values.get("max_daily_teaching_atoms")
+            no_limit = row.values["acknowledge_no_daily_limit"]
+            if maximum is None and not no_limit:
+                _issue(
+                    issues,
+                    "InstructorProfiles",
+                    row.row_number,
+                    "max_daily_teaching_atoms,acknowledge_no_daily_limit",
+                    "MISSING_DAILY_LOAD_POLICY",
+                    "Provide a positive maximum or explicitly acknowledge an approved no-limit policy.",
+                )
+            elif maximum is not None and no_limit:
+                _issue(
+                    issues,
+                    "InstructorProfiles",
+                    row.row_number,
+                    "max_daily_teaching_atoms,acknowledge_no_daily_limit",
+                    "CONFLICTING_DAILY_LOAD_POLICY",
+                    "Choose a positive maximum or no-limit acknowledgement, not both.",
+                )
+
+    target_codes = {
+        models.ReservedBlockScope.COLLEGE: {
+            row.values["code"] for row in rows["Colleges"]
+        },
+        models.ReservedBlockScope.DEPARTMENT: {
+            row.values["code"] for row in rows["Departments"]
+        },
+        models.ReservedBlockScope.PROGRAM: {
+            row.values["code"] for row in rows["Programs"]
+        },
+        models.ReservedBlockScope.SECTION: {
+            row.values["code"] for row in rows["Sections"]
+        },
+    }
+    blocks_with_slots = {
+        row.values["block_key"] for row in rows.get("ReservedBlockSlots", [])
+    }
+    for row in rows.get("ReservedBlocks", []):
+        scope = row.values["scope"]
+        target_code = row.values.get("target_code")
+        if scope == models.ReservedBlockScope.INSTITUTION:
+            if target_code:
+                _issue(
+                    issues,
+                    "ReservedBlocks",
+                    row.row_number,
+                    "target_code",
+                    "UNEXPECTED_SCOPE_TARGET",
+                    "Institution-scoped blocks must leave target_code blank.",
+                )
+        elif not target_code:
+            _issue(
+                issues,
+                "ReservedBlocks",
+                row.row_number,
+                "target_code",
+                "MISSING_SCOPE_TARGET",
+                f"{scope.title()}-scoped blocks require a target code.",
+            )
+        elif target_code not in target_codes.get(scope, set()):
+            _issue(
+                issues,
+                "ReservedBlocks",
+                row.row_number,
+                "target_code",
+                "UNKNOWN_SCOPE_TARGET",
+                f"No {scope.lower()} with code {target_code!r} exists in this workbook.",
+            )
+        if row.values.get("is_active") is not False and row.values["block_key"] not in blocks_with_slots:
+            _issue(
+                issues,
+                "ReservedBlocks",
+                row.row_number,
+                "block_key",
+                "MISSING_RESERVED_BLOCK_SLOT",
+                "Every active recurring reserved block requires at least one slot row.",
+            )
 
     for row in rows["ProgramSubjects"]:
         department_code = row.values.get("authoritative_department_code")
@@ -959,6 +1286,7 @@ def preview_workbook(content: bytes, term: models.AcademicTerm, user: models.Use
 
     issues: list[Issue] = []
     parsed: dict[str, list[ParsedRow]] = {name: [] for name in SHEET_SCHEMAS}
+    active_schemas: Mapping[str, SheetSpec] = SHEET_SCHEMAS
     schema_version: str | None = None
     if not content:
         _issue(issues, "(workbook)", None, "", "EMPTY_WORKBOOK", "Workbook content is empty.")
@@ -985,7 +1313,8 @@ def preview_workbook(content: bytes, term: models.AcademicTerm, user: models.Use
             )
         else:
             schema_version = _read_schema_version(workbook, issues)
-            allowed_sheets = set(SHEET_SCHEMAS) | {SCHEMA_SHEET}
+            active_schemas = SHEET_SCHEMAS_BY_VERSION.get(schema_version or "", SHEET_SCHEMAS)
+            allowed_sheets = set(active_schemas) | {SCHEMA_SHEET}
             for unexpected in sorted(set(workbook.sheetnames) - allowed_sheets):
                 _issue(
                     issues,
@@ -993,23 +1322,32 @@ def preview_workbook(content: bytes, term: models.AcademicTerm, user: models.Use
                     None,
                     "",
                     "UNEXPECTED_SHEET",
-                    f"Sheet {unexpected!r} is not part of schema {SCHEMA_VERSION}.",
+                    f"Sheet {unexpected!r} is not part of schema {schema_version or SCHEMA_VERSION}.",
                 )
-            for name, schema in SHEET_SCHEMAS.items():
+            for name, schema in active_schemas.items():
                 parsed[name] = _parse_sheet(workbook, name, schema, issues)
-            _validate_references(parsed, issues)
-            _validate_semantics(parsed, term, issues)
+            if schema_version in SUPPORTED_SCHEMA_VERSIONS:
+                _validate_references(parsed, issues)
+                _validate_semantics(
+                    parsed,
+                    term,
+                    issues,
+                    schema_version=schema_version,
+                )
 
+    active_core_sheets = {
+        name for name, schema in active_schemas.items() if schema.required
+    }
     normalized_sheets = {
         name: [row.values for row in parsed[name]]
-        for name in SHEET_SCHEMAS
-        if name in CORE_SHEETS or parsed[name]
+        for name in active_schemas
+        if name in active_core_sheets or parsed[name]
     }
     batch.summary = {
         "schema_version": schema_version or SCHEMA_VERSION,
         "source_sha256": digest,
         "sheets": normalized_sheets,
-        "row_counts": {name: len(rows) for name, rows in parsed.items()},
+        "row_counts": {name: len(parsed[name]) for name in active_schemas},
     }
     batch.total_rows = sum(len(rows) for rows in parsed.values())
     batch.error_count = len(issues)
@@ -1085,8 +1423,14 @@ def commit_import(batch: models.ImportBatch, user: models.User) -> models.TermDa
     if locked.status != models.ImportStatus.PREVIEWED or locked.error_count or locked.errors.exists():
         raise ImportCommitError("Only a clean PREVIEWED import batch can be committed.")
     summary = locked.summary
-    if not isinstance(summary, dict) or summary.get("schema_version") != SCHEMA_VERSION:
-        raise ImportCommitError(f"The staged workbook does not use supported schema {SCHEMA_VERSION}.")
+    if (
+        not isinstance(summary, dict)
+        or summary.get("schema_version") not in SUPPORTED_SCHEMA_VERSIONS
+    ):
+        raise ImportCommitError(
+            "The staged workbook does not use a supported schema "
+            f"({', '.join(SUPPORTED_SCHEMA_VERSIONS)})."
+        )
     if summary.get("source_sha256") != locked.file_hash:
         raise ImportCommitError("The staged workbook hash does not match its import batch.")
 
@@ -1104,6 +1448,33 @@ def commit_import(batch: models.ImportBatch, user: models.User) -> models.TermDa
             label=f"Import {locked.file_hash[:12]}",
             created_by=user,
         )
+
+        policy_versions: dict[tuple[str, int], models.ConstraintPolicyVersion] = {}
+        for row in _rows(summary, "ConstraintPolicyReferences"):
+            key = (row["rule_code"], row["version"])
+            try:
+                policy = models.ConstraintPolicyVersion.objects.get(
+                    rule_code=key[0],
+                    version=key[1],
+                    effective_term=locked.term,
+                )
+            except models.ConstraintPolicyVersion.DoesNotExist as exc:
+                raise ImportCommitError(
+                    f"Referenced constraint policy {key[0]} v{key[1]} does not exist for this term."
+                ) from exc
+            if not policy.is_approved:
+                raise ImportCommitError(
+                    f"Referenced constraint policy {key[0]} v{key[1]} is not approved."
+                )
+            if policy.classification != models.ConstraintKind.HARD:
+                raise ImportCommitError(
+                    f"Referenced constraint policy {key[0]} v{key[1]} is not a hard rule."
+                )
+            if policy.policy_hash != str(row["policy_hash"]).lower():
+                raise ImportCommitError(
+                    f"Referenced constraint policy {key[0]} v{key[1]} has a hash mismatch."
+                )
+            policy_versions[key] = policy
 
         colleges: dict[str, models.College] = {}
         for row in _rows(summary, "Colleges"):
@@ -1234,6 +1605,7 @@ def commit_import(batch: models.ImportBatch, user: models.User) -> models.TermDa
                 code=row["code"],
                 year_level=row["year_level"],
                 cohort_status=row["cohort_status"],
+                expected_enrollment=row.get("expected_enrollment"),
                 is_active=_bool(row, "is_active", True),
             )
             _validated_save(section)
@@ -1264,15 +1636,75 @@ def commit_import(batch: models.ImportBatch, user: models.User) -> models.TermDa
             _validated_save(slot)
             slots[(row["day"], row["sequence"])] = slot
 
+        reserved_blocks: dict[str, models.ReservedTimeBlock] = {}
+        scope_targets: dict[str, Mapping[str, models.Model]] = {
+            models.ReservedBlockScope.COLLEGE: colleges,
+            models.ReservedBlockScope.DEPARTMENT: departments,
+            models.ReservedBlockScope.PROGRAM: programs,
+            models.ReservedBlockScope.SECTION: sections,
+        }
+        scope_fields = {
+            models.ReservedBlockScope.COLLEGE: "college",
+            models.ReservedBlockScope.DEPARTMENT: "department",
+            models.ReservedBlockScope.PROGRAM: "program",
+            models.ReservedBlockScope.SECTION: "section",
+        }
+        for row in _rows(summary, "ReservedBlocks"):
+            scope = row["scope"]
+            target_kwargs: dict[str, models.Model] = {}
+            if scope != models.ReservedBlockScope.INSTITUTION:
+                field = scope_fields[scope]
+                target_kwargs[field] = scope_targets[scope][row["target_code"]]
+            block = models.ReservedTimeBlock(
+                revision=revision,
+                scope=scope,
+                policy_version=policy_versions[(row["policy_rule_code"], row["policy_version"])],
+                label=row["label"],
+                reason=row.get("reason") or "",
+                is_active=_bool(row, "is_active", True),
+                **target_kwargs,
+            )
+            _validated_save(block)
+            reserved_blocks[row["block_key"]] = block
+        for row in _rows(summary, "ReservedBlockSlots"):
+            link = models.ReservedTimeBlockSlot(
+                block=reserved_blocks[row["block_key"]],
+                time_slot=slots[(row["day"], row["sequence"])],
+            )
+            _validated_save(link)
+
         instructor_profiles: dict[str, models.InstructorAvailabilityProfile] = {}
+        imported_instructor_profiles = {
+            row["instructor_code"]: row for row in _rows(summary, "InstructorProfiles")
+        }
         for code, instructor in instructors.items():
             assume_full = _bool(instructor_rows[code], "assume_fully_available")
+            imported_profile = imported_instructor_profiles.get(code)
+            policy = None
+            if imported_profile:
+                policy = policy_versions[
+                    (
+                        imported_profile["daily_load_policy_rule_code"],
+                        imported_profile["daily_load_policy_version"],
+                    )
+                ]
             profile = models.InstructorAvailabilityProfile(
                 revision=revision,
                 instructor=instructor,
                 assume_fully_available=assume_full,
-                acknowledged_by=user if assume_full else None,
-                acknowledged_at=timezone.now() if assume_full else None,
+                max_daily_teaching_atoms=(
+                    imported_profile.get("max_daily_teaching_atoms")
+                    if imported_profile
+                    else None
+                ),
+                acknowledge_no_daily_limit=(
+                    _bool(imported_profile, "acknowledge_no_daily_limit")
+                    if imported_profile
+                    else False
+                ),
+                daily_load_policy_version=policy,
+                acknowledged_by=user if assume_full or imported_profile else None,
+                acknowledged_at=timezone.now() if assume_full or imported_profile else None,
             )
             _validated_save(profile)
             instructor_profiles[code] = profile
@@ -1390,7 +1822,7 @@ def commit_import(batch: models.ImportBatch, user: models.User) -> models.TermDa
 
         revision.content_hash = models.canonical_sha256(
             {
-                "schema_version": SCHEMA_VERSION,
+                "schema_version": summary["schema_version"],
                 "term_id": locked.term_id,
                 "sheets": summary["sheets"],
             }
@@ -1412,6 +1844,11 @@ def commit_import(batch: models.ImportBatch, user: models.User) -> models.TermDa
                 "content_hash": revision.content_hash,
             },
         )
+        # Keep the caller's instance coherent with the locked row while the
+        # committed database evidence remains authoritative.
+        batch.status = locked.status
+        batch.committed_revision = revision
+        batch.committed_revision_id = revision.pk
         return revision
     except ImportCommitError:
         raise
@@ -1430,6 +1867,10 @@ def build_import_template() -> bytes:
     schema_sheet["B1"] = SCHEMA_VERSION
     schema_sheet["A2"] = "day_numbering"
     schema_sheet["B2"] = "0=Monday ... 6=Sunday"
+    schema_sheet["A3"] = "fixed_student_limit"
+    schema_sheet["B3"] = "1-50 students per section and combined meeting; no room-capacity fields"
+    schema_sheet["A4"] = "legacy_schema"
+    schema_sheet["B4"] = f"{LEGACY_SCHEMA_VERSION} remains importable for exploratory history only"
     schema_sheet.sheet_state = "hidden"
 
     header_fill = PatternFill(fill_type="solid", fgColor="073A2A")
@@ -1452,6 +1893,32 @@ def build_import_template() -> bytes:
                 validation = DataValidation(type="list", formula1=formula, allow_blank=not spec.required)
                 validation.error = f"Choose one of: {', '.join(spec.choices)}"
                 validation.errorTitle = "Invalid value"
+                sheet.add_data_validation(validation)
+                validation.add(f"{cell.column_letter}2:{cell.column_letter}10000")
+            elif spec.kind == "boolean":
+                validation = DataValidation(
+                    type="list",
+                    formula1='"TRUE,FALSE"',
+                    allow_blank=not spec.required,
+                )
+                validation.error = "Choose TRUE or FALSE."
+                validation.errorTitle = "Invalid Boolean"
+                sheet.add_data_validation(validation)
+                validation.add(f"{cell.column_letter}2:{cell.column_letter}10000")
+            elif spec.kind == "integer" and (
+                spec.minimum is not None or spec.maximum is not None
+            ):
+                minimum = spec.minimum if spec.minimum is not None else -2_147_483_648
+                maximum = spec.maximum if spec.maximum is not None else 2_147_483_647
+                validation = DataValidation(
+                    type="whole",
+                    operator="between",
+                    formula1=str(minimum),
+                    formula2=str(maximum),
+                    allow_blank=not spec.required,
+                )
+                validation.error = f"Enter a whole number from {minimum} to {maximum}."
+                validation.errorTitle = "Invalid whole number"
                 sheet.add_data_validation(validation)
                 validation.add(f"{cell.column_letter}2:{cell.column_letter}10000")
         sheet.auto_filter.ref = f"A1:{sheet.cell(row=1, column=len(schema.columns)).coordinate}"

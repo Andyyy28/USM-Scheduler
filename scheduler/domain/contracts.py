@@ -53,6 +53,11 @@ class ViolationCode(StrEnum):
     LABORATORY_ROOM_REQUIRED = "LABORATORY_ROOM_REQUIRED"
     MISSING_AUTHORIZATION_EVIDENCE = "MISSING_AUTHORIZATION_EVIDENCE"
     ROOM_AUTHORIZATION_VIOLATION = "ROOM_AUTHORIZATION_VIOLATION"
+    MISSING_ENROLLMENT_EVIDENCE = "MISSING_ENROLLMENT_EVIDENCE"
+    FIXED_STUDENT_LIMIT_EXCEEDED = "FIXED_STUDENT_LIMIT_EXCEEDED"
+    RESERVED_BLOCK_VIOLATION = "RESERVED_BLOCK_VIOLATION"
+    MISSING_DAILY_LOAD_EVIDENCE = "MISSING_DAILY_LOAD_EVIDENCE"
+    INSTRUCTOR_DAILY_LOAD_EXCEEDED = "INSTRUCTOR_DAILY_LOAD_EXCEEDED"
 
 
 @dataclass(frozen=True, slots=True)
@@ -263,24 +268,50 @@ class InstructorEvidence:
 
     instructor_id: str
     available_atom_ids: tuple[str, ...]
+    max_daily_teaching_atoms: int | None = None
+    acknowledge_no_daily_limit: bool = False
+    daily_load_policy_hash: str | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "available_atom_ids", tuple(self.available_atom_ids))
         _require_text("instructor_id", self.instructor_id)
         if len(self.available_atom_ids) != len(set(self.available_atom_ids)):
             raise ValueError("instructor available atom IDs must be unique")
+        if self.max_daily_teaching_atoms is not None and self.max_daily_teaching_atoms <= 0:
+            raise ValueError("max_daily_teaching_atoms must be positive when provided")
+        if type(self.acknowledge_no_daily_limit) is not bool:
+            raise ValueError("acknowledge_no_daily_limit must be Boolean")
+        if self.max_daily_teaching_atoms is not None and self.acknowledge_no_daily_limit:
+            raise ValueError("an instructor cannot have both a daily limit and no-limit acknowledgement")
+        if self.daily_load_policy_hash is not None:
+            _require_text("daily_load_policy_hash", self.daily_load_policy_hash)
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        result = {
             "instructor_id": self.instructor_id,
             "available_atom_ids": sorted(self.available_atom_ids),
         }
+        # Omit schema-1.2 additions when absent so legacy snapshot hashes round-trip.
+        if self.max_daily_teaching_atoms is not None:
+            result["max_daily_teaching_atoms"] = self.max_daily_teaching_atoms
+        if self.acknowledge_no_daily_limit:
+            result["acknowledge_no_daily_limit"] = True
+        if self.daily_load_policy_hash is not None:
+            result["daily_load_policy_hash"] = self.daily_load_policy_hash
+        return result
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> Self:
         return cls(
             instructor_id=str(value["instructor_id"]),
             available_atom_ids=tuple(str(item) for item in value.get("available_atom_ids", ())),
+            max_daily_teaching_atoms=(
+                int(value["max_daily_teaching_atoms"])
+                if value.get("max_daily_teaching_atoms") is not None
+                else None
+            ),
+            acknowledge_no_daily_limit=value.get("acknowledge_no_daily_limit", False),
+            daily_load_policy_hash=_optional_text(value.get("daily_load_policy_hash")),
         )
 
 
@@ -364,6 +395,10 @@ class MeetingEvent:
     required_capability_ids: tuple[str, ...] = ()
     requires_laboratory_room: bool = False
     authorization_requirements: tuple[RoomAuthorizationRequirement, ...] = ()
+    section_headcounts: tuple[tuple[str, int], ...] = ()
+    meeting_headcount: int | None = None
+    fixed_student_limit: int | None = None
+    reserved_atom_ids: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "section_ids", tuple(self.section_ids))
@@ -375,6 +410,12 @@ class MeetingEvent:
             "authorization_requirements",
             tuple(self.authorization_requirements),
         )
+        object.__setattr__(
+            self,
+            "section_headcounts",
+            tuple((str(section_id), int(count)) for section_id, count in self.section_headcounts),
+        )
+        object.__setattr__(self, "reserved_atom_ids", tuple(self.reserved_atom_ids))
         _require_text("event_id", self.event_id)
         if self.duration_atoms <= 0:
             raise ValueError("duration_atoms must be positive")
@@ -393,6 +434,23 @@ class MeetingEvent:
             raise ValueError("only one authorization requirement is allowed per section")
         if any(section_id not in self.section_ids for section_id in requirement_sections):
             raise ValueError("authorization requirements must refer to attached sections")
+        headcount_sections = [section_id for section_id, _ in self.section_headcounts]
+        if len(headcount_sections) != len(set(headcount_sections)):
+            raise ValueError("section headcount evidence must be unique")
+        if any(section_id not in self.section_ids for section_id in headcount_sections):
+            raise ValueError("section headcounts must refer to attached sections")
+        if any(not 1 <= count <= 50 for _, count in self.section_headcounts):
+            raise ValueError("section headcounts must be from 1 to 50")
+        if self.meeting_headcount is not None and self.meeting_headcount <= 0:
+            raise ValueError("meeting_headcount must be positive when provided")
+        if self.fixed_student_limit is not None and self.fixed_student_limit != 50:
+            raise ValueError("fixed_student_limit must be exactly 50")
+        if self.section_headcounts and self.meeting_headcount != sum(
+            count for _, count in self.section_headcounts
+        ):
+            raise ValueError("meeting_headcount must equal the sum of unique section enrollments")
+        if len(self.reserved_atom_ids) != len(set(self.reserved_atom_ids)):
+            raise ValueError("reserved atom IDs must be unique")
         if not self.candidates:
             raise ValueError(f"event {self.event_id!r} has no legal candidate placements")
         candidate_ids = [candidate.candidate_id for candidate in self.candidates]
@@ -430,6 +488,17 @@ class MeetingEvent:
                     key=lambda item: item.section_id,
                 )
             ]
+        if self.section_headcounts:
+            result["section_headcounts"] = [
+                [section_id, count]
+                for section_id, count in sorted(self.section_headcounts)
+            ]
+        if self.meeting_headcount is not None:
+            result["meeting_headcount"] = self.meeting_headcount
+        if self.fixed_student_limit is not None:
+            result["fixed_student_limit"] = self.fixed_student_limit
+        if self.reserved_atom_ids:
+            result["reserved_atom_ids"] = sorted(self.reserved_atom_ids)
         return result
 
     @classmethod
@@ -450,6 +519,21 @@ class MeetingEvent:
                 RoomAuthorizationRequirement.from_dict(item)
                 for item in value.get("authorization_requirements", ())
             ),
+            section_headcounts=tuple(
+                (str(item[0]), int(item[1]))
+                for item in value.get("section_headcounts", ())
+            ),
+            meeting_headcount=(
+                int(value["meeting_headcount"])
+                if value.get("meeting_headcount") is not None
+                else None
+            ),
+            fixed_student_limit=(
+                int(value["fixed_student_limit"])
+                if value.get("fixed_student_limit") is not None
+                else None
+            ),
+            reserved_atom_ids=tuple(str(item) for item in value.get("reserved_atom_ids", ())),
         )
 
 
@@ -750,6 +834,10 @@ class ProblemInstance:
         return _schema_version_at_least(self.schema_version, 1, 1)
 
     @property
+    def supports_thesis_v2_rules(self) -> bool:
+        return _schema_version_at_least(self.schema_version, 1, 2)
+
+    @property
     def day_ids(self) -> tuple[str, ...]:
         day_indexes: dict[str, int] = {}
         for atom in self.time_atoms:
@@ -831,6 +919,9 @@ class SolverConfig:
     elite_fraction: float = 0.05
     repair_attempts: int = 20
     max_generations: int | None = None
+    cp_model_presolve: bool = True
+    linearization_level: int = 2
+    diagnostic_trace: bool = False
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "algorithm", SolverAlgorithm(self.algorithm))
@@ -857,13 +948,19 @@ class SolverConfig:
             raise ValueError("repair_attempts must be non-negative")
         if self.max_generations is not None and self.max_generations <= 0:
             raise ValueError("max_generations must be positive when provided")
+        if type(self.cp_model_presolve) is not bool:
+            raise ValueError("cp_model_presolve must be Boolean")
+        if self.linearization_level not in {0, 1, 2}:
+            raise ValueError("linearization_level must be 0, 1, or 2")
+        if type(self.diagnostic_trace) is not bool:
+            raise ValueError("diagnostic_trace must be Boolean")
 
     @property
     def canonical_hash(self) -> str:
         return canonical_sha256(self.to_dict())
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        result = {
             "algorithm": self.algorithm.value,
             "seed": self.seed,
             "time_limit_seconds": self.time_limit_seconds,
@@ -876,6 +973,15 @@ class SolverConfig:
             "repair_attempts": self.repair_attempts,
             "max_generations": self.max_generations,
         }
+        # Defaults match the historical implicit CP-SAT settings and are omitted
+        # to preserve existing configuration hashes.
+        if not self.cp_model_presolve:
+            result["cp_model_presolve"] = False
+        if self.linearization_level != 2:
+            result["linearization_level"] = self.linearization_level
+        if self.diagnostic_trace:
+            result["diagnostic_trace"] = True
+        return result
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> Self:

@@ -15,7 +15,7 @@ from scheduler.services.problem_builder import build_problem
 pytestmark = pytest.mark.django_db
 
 
-def test_builder_freezes_complete_schema_1_1_hard_rule_evidence() -> None:
+def test_builder_freezes_complete_schema_1_2_hard_rule_evidence() -> None:
     output = StringIO()
     call_command("seed_demo", stdout=output)
     identifiers = json.loads(output.getvalue().strip().splitlines()[-1])
@@ -26,12 +26,21 @@ def test_builder_freezes_complete_schema_1_1_hard_rule_evidence() -> None:
     restored = ProblemInstance.from_dict(problem.to_dict())
 
     assert restored == problem
-    assert problem.schema_version == "1.1"
+    assert problem.schema_version == "1.2"
     assert problem.supports_independent_hard_rule_validation
+    assert problem.supports_thesis_v2_rules
     assert problem.room_evidence
     assert problem.instructor_evidence
     assert all(event.authorization_requirements for event in problem.events)
     assert any(event.requires_laboratory_room for event in problem.events)
+    assert all(event.fixed_student_limit == 50 for event in problem.events)
+    assert all(event.meeting_headcount == 30 for event in problem.events)
+    assert all(event.section_headcounts for event in problem.events)
+    assert all(
+        evidence.max_daily_teaching_atoms == 6
+        and evidence.daily_load_policy_hash
+        for evidence in problem.instructor_evidence
+    )
 
     for event in problem.events:
         for candidate in event.candidates:
@@ -72,5 +81,5 @@ def test_builder_uses_bounded_bulk_queries_and_is_deterministic() -> None:
     # The bound is independent of the number of rooms, instructors, meetings,
     # availability rows, and preferences in the revision.  It guards against
     # reintroducing related-manager N+1 queries in the canonical builder.
-    assert len(captured) <= 16
+    assert len(captured) <= 18
     assert build_problem(revision, objective).problem.canonical_hash == first.canonical_hash

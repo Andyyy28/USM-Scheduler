@@ -6,8 +6,8 @@ ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PIP_NO_CACHE_DIR=1
 
 WORKDIR /build
-COPY requirements-lock.txt ./
-RUN python -m pip wheel --wheel-dir=/wheels --requirement requirements-lock.txt
+COPY requirements-hashed.txt ./
+RUN python -m pip download --dest=/wheels --only-binary=:all: --require-hashes --requirement requirements-hashed.txt
 
 
 FROM python:3.12.14-slim-bookworm AS runtime
@@ -34,7 +34,8 @@ RUN groupadd --gid "${APP_GID}" scheduler \
 
 WORKDIR /app
 COPY --from=wheels /wheels /wheels
-RUN python -m pip install --no-cache-dir /wheels/* \
+COPY --from=wheels /build/requirements-hashed.txt ./requirements-hashed.txt
+RUN python -m pip install --no-cache-dir --no-index --find-links=/wheels --require-hashes --requirement requirements-hashed.txt \
     && rm -rf /wheels
 
 # Explicit copies keep local secrets, research datasets, and VCS metadata outside the image.

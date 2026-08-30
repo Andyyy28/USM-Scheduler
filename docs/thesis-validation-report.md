@@ -2,24 +2,85 @@
 
 ## Release candidate
 
-- Branch: `ui/simplified-workflow`
+- Branch: `thesis/experimental-platform-v2`
 - UI baseline: `f115a010ae2d64f2d31706bf26144788ba1b29bf`
-- Final QA commit: the commit containing this report; record its full hash in the signed thesis evidence copy and participant result sheet.
-- Validation date: 28 August 2026
-- Scope: thesis-defense readiness for the staff-facing scheduling workflow, not institutional production deployment.
+- Working checkout base: `c11afa3fa481e980909fd51a9c2e1dad56fc5e37`; the implementation changes are uncommitted and have not been pushed.
+- Final QA commit: pending; record the final full hash and CI URL in the signed thesis evidence copy.
+- Latest local verification date: 30 August 2026
+- Scope: thesis-defense readiness for the staff workflow and CP-SAT/GA experimental platform, not institutional production deployment.
 - Data: deterministic synthetic/de-identified workbooks only.
 
 ## Environment
 
 Local validation uses Windows, Python 3.12.2, Django's live test server, Playwright 1.62.0, bundled Chromium, and Playwright Firefox. GitHub Actions repeats the suite on Linux with PostgreSQL 18 and Redis 7.4, production security checks, migrations, static collection, coverage, and a container build.
 
-## Automated validation
+## Current experimental-platform verification — 30 August 2026
 
-The final execution results are recorded here after the release-candidate run. A result is not marked passed until the command exits successfully.
+This is implementation verification on Windows with the repository Python 3.12
+environment and local SQLite. It is not a formal experiment, deployment, or
+evidence that either algorithm performs better for an authorized USM term.
+
+| Check | Current evidence | Result |
+|---|---|---|
+| Non-browser regression suite after GA-v5 | `pytest -q --ignore=tests/e2e` | **295 passed, 3 diagnostic tests deselected; 123.63 seconds** |
+| Both engines on the schema 1.1 synthetic trial workbook | `pytest -q -m diagnostic tests/integration/test_trial_data.py::test_trial_workbook_performance_exercise_is_feasible_for_both_engines` | Passed; 68.48 seconds for the software test, not a comparative benchmark |
+| Lint and patch whitespace | `ruff check .`; `git diff --check` | Passed; Git reported line-ending normalization notices only |
+| Django and migration drift | `manage.py check`; `manage.py makemigrations --check --dry-run` | Passed; no changes detected |
+| Dependency consistency and vulnerability audit | `pip check`; `pip_audit -r requirements-lock.txt --no-deps --disable-pip` | Passed; no broken requirements or known vulnerabilities |
+| Hash-enforced Linux dependency resolution | Binary-only CPython 3.12 manylinux installation dry run against `requirements-hashed.txt` | Passed; all 37 exact runtime packages verified, no installation performed |
+| Static assets | Supported Django `STORAGES` configuration and `collectstatic --noinput` | Passed; production HTML uses fingerprinted CSS/JS URLs |
+| Targeted rendered reflow | In-app browser, Prepare Data and draft Formal Study at 1440, 768, 390, 320 pixels | Passed; document scroll width equals client width, including scrollbar space; no captured warning/error logs |
+| Formal conclusion disclosure | Rendered draft study | Correctly shows “No formal conclusion available” |
+| Full Playwright/browser/axe suite | Local Chromium launch | Blocked by host browser-launch failure before application assertions; not passed |
+| PostgreSQL/Redis/Celery Compose acceptance | Docker executable unavailable on this host | Not run; mocked runtime tests do not prove real worker-loss recovery, cgroup limits, or fresh-process execution |
+| Word manuscript/guide | Regenerated deterministic DOCX files; OOXML reopened successfully | Structural check only for this pass; current render attempt could not run because LibreOffice/soffice is unavailable |
+| Final-commit CI and container build | No commit, push, or remote workflow dispatch in this pass | Pending |
+
+This pass adds persisted-pilot authentication, terminal worker provenance checks,
+snapshot consistency checks, per-scale GA mutation-formula resolution, and
+deadline-qualified incumbents. Both solvers now reject improvements whose shared
+validation/scoring finishes after the deadline. Only excluded diagnostic runs
+record bounded convergence traces. The evidence bundle contains numeric traces,
+printable figures, objective outcomes, resource-period metrics, and checksums.
+
+The subsequent `ga-v4` algorithm continuation adds daily-limit-aware construction,
+hard-first bounded repair, and interrupted-initialization safeguards. Its
+[synthetic tuning report](algorithm-tuning-2026-08-30.md) records the matched
+development measurements and the remaining fully occupied-grid failures. Those
+shortened runs do not replace the approved equal-budget pilot or formal study.
+
+The subsequent `ga-v5` continuation adds prepared lookup contexts, independent
+incumbent rechecks, a 128-request repair cap, and a 64-trial feasible improvement
+pass after completed generations. Its [development report](algorithm-tuning-ga-v5.md)
+records all 80 matched synthetic observations and all 11 unsuccessful searches.
+At 30 seconds, GA-v5 solved 10/10 dense observations versus GA-v4's 2/10; both
+kept all 15 easier observations feasible. Two mixed-case seeds had worse
+penalties under GA-v5, which the report retains. These local measurements do not
+establish a formal comparative conclusion, and CP-SAT source and the formal
+equal-budget grid are unchanged by this continuation.
+
+The new enrollment/policy-aware practice workbook never approves institutional
+policies automatically. Historical snapshots/results and the legacy practice
+workbook remain preserved. All automated pilot/study fixtures are synthetic
+software tests, not research observations.
+
+Still required: the approved equal-budget synthetic pilot on the final benchmark
+build, one authorized de-identified term, all formal trials, actual container
+acceptance, 200% zoom, manual keyboard/screen-reader/reduced-motion/print checks,
+updated axe scans, current Word layout review, and approved 3–5 usability sessions.
+
+## Historical UI-baseline automated validation
+
+The results below describe the previously recorded UI release-candidate baseline.
+They are retained as regression evidence, but they do not automatically validate
+the experimental-platform branch. Every changed check must be rerun and the
+final commit and CI URL added before thesis acceptance. A result is never marked
+passed until its command exits successfully.
 
 | Check | Command/evidence | Result |
 |---|---|---|
 | Clean dependency consistency | Isolated Python environment, `python -m pip check` | Passed; no broken requirements |
+| Locked dependency vulnerability audit | `pip-audit==2.10.1`; `python -m pip_audit --requirement requirements-lock.txt --no-deps --disable-pip` | Passed locally on Python 3.12.14 after updating `sqlparse` to 0.6.0; no known vulnerabilities found. Repeat in final CI. |
 | Python lint | `ruff check .` | Passed |
 | Django configuration | `python manage.py check` | Passed; no issues |
 | Production security configuration | `python manage.py check --deploy --fail-level WARNING` with production environment values | Passed; no issues |
@@ -29,10 +90,33 @@ The final execution results are recorded here after the release-candidate run. A
 | Chromium browser suite | Included in complete pytest suite | Passed |
 | Firefox workflow smoke | `test_firefox_login_navigation_and_principal_workflow_smoke` | Passed |
 | WCAG A/AA automation | `test_critical_pages_have_no_automated_wcag_a_or_aa_violations` | Passed; zero detected violations on scanned pages |
-| Linux/PostgreSQL/Redis CI | Manually dispatched `CI` workflow for this branch | Pending dispatch |
-| Container build | `container` job in the dispatched `CI` workflow | Pending dispatch |
+| Linux/PostgreSQL/Redis CI | `CI` workflow for the final thesis branch commit | Pending final-branch dispatch |
+| Container build | `container` job for the final thesis branch commit | Pending final-branch dispatch |
 
 The CI coverage threshold is 70%. Coverage is a regression guard, not a substitute for the permission, workflow, and state-transition assertions below.
+
+## Formal experiment acceptance
+
+The following evidence is required before the system may state a comparative
+conclusion. Empty cells are intentional and must be completed only from an
+authorized, protocol-valid execution.
+
+| Gate | Required evidence | Current result |
+|---|---|---|
+| Study classification | Formal study identifier; exploratory batches visibly excluded | Implemented and locally tested; authorized formal study still pending |
+| Constraint provenance | Approved constraint-policy manifest, objective profile, and hashes | Pending institutional approval |
+| Fixed student limit | Every section and combined meeting has a frozen headcount of 1–50; no variable room/chair/space model | Pending authorized dataset |
+| Scaling | Nested 25%, 50%, 75%, and 100% snapshot hashes with retained-lock disclosures | Pending final study |
+| Equal tuning budget | Six CP-SAT and six GA profiles over seeds 2001–2005 at 60 seconds, synthetic only | Pending pilot execution |
+| Formal matrix | 240 measured runs, 8 excluded warm-ups, 4 excluded feasibility diagnostics, and 8 excluded trace runs | Pending final study |
+| Execution controls | One CPU, 2 GB, fresh child process, sequential randomized order, worker-side manifest | Pending benchmark-host verification |
+| Primary analysis | Feasibility, feasible raw penalty, and censor-aware time to feasibility with Holm correction | Pending final study |
+| Protocol integrity | No missing, unclassified, stale, or provenance-mismatched trial; audited replacement pairs retained | Pending final study |
+| Evidence bundle | Deterministic de-identified ZIP, checksums, trial data, figures, definitions, and claim boundaries | Pending final study |
+
+Until every formal gate passes, the research interface and manuscript must say
+**No formal conclusion available**. Synthetic or exploratory results may validate
+software behavior but cannot establish which algorithm performs better for USM.
 
 ## Risk-based browser matrix
 
@@ -102,7 +186,14 @@ No participant outcome, completion time, quotation, or acceptance claim is fabri
 - Automated axe results cover detectable rules only; the manual checks and participant study remain necessary.
 - Local SQLite evidence is supplemented by, not equivalent to, the dispatched Linux/PostgreSQL/Redis CI run.
 - Thesis results apply to the tested synthetic/approved datasets and roles; they do not establish institution-wide production readiness.
+- The fixed maximum of 50 is an academic section/meeting rule. The platform does not validate chairs, floor area, or variable physical-room capacity; participating rooms require administrative prevalidation.
+- The UI baseline's automated browser and accessibility evidence must be rerun after experimental-platform changes. Manual accessibility and participant evidence remain pending regardless of automated results.
 
 ## Acceptance decision
 
-The branch is technically eligible for thesis evaluation only after all automated checks and the manually dispatched CI workflow pass. Final thesis-validation acceptance remains pending until the manual accessibility checklist and approved 3–5 participant usability sessions satisfy the rules above.
+The branch is technically eligible for thesis evaluation only after all updated
+automated checks and the final-commit CI workflow pass. A formal algorithm
+conclusion additionally requires every formal experiment gate above. Final
+thesis-validation acceptance remains pending until institutional rule/data
+authorization, the manual accessibility checklist, and approved 3–5 participant
+usability sessions satisfy the stated rules.

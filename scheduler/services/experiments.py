@@ -168,8 +168,39 @@ def create_experiment_batch(
     _ensure_json_object(custom_configuration, "run_configuration")
     plan = deterministic_execution_order(normalized_seeds, order_seed)
     manifest = environment_manifest()
+    study_name = name or f"CP-SAT vs GA / {snapshot.snapshot_hash[:12]}"
+    study = models.ExperimentStudy(
+        name=study_name,
+        mode=models.ExperimentMode.EXPLORATORY,
+        protocol_version="exploratory-v1",
+        status=models.StudyStatus.DRAFT,
+        source_snapshot=snapshot,
+        scale_percentages=[100],
+        seeds=list(normalized_seeds),
+        order_seed=order_seed,
+        deadline_seconds=time_limit,
+        cpu_limit=1,
+        memory_limit_mb=memory_limit_mb,
+        warmups_per_algorithm_scale=0,
+        protocol_manifest={
+            "classification": "exploratory",
+            "configurable": True,
+            "formal_conclusion_allowed": False,
+            "environment_manifest_hash": manifest["manifest_hash"],
+        },
+        protocol_integrity={
+            "formal_eligible": False,
+            "reason": (
+                "Configurable exploratory protocol; this study cannot produce a formal winner."
+            ),
+        },
+        created_by=user,
+    )
+    study.full_clean()
+    study.save()
     batch = models.ExperimentBatch(
-        name=name or f"CP-SAT vs GA / {snapshot.snapshot_hash[:12]}",
+        name=study_name,
+        study=study,
         snapshot=snapshot,
         seeds=list(normalized_seeds),
         order_seed=order_seed,
@@ -340,6 +371,7 @@ def refresh_experiment_status(batch: models.ExperimentBatch) -> models.Experimen
     if locked.status != new_status:
         locked.status = new_status
         locked.save(update_fields=["status", "updated_at"])
+    _sync_exploratory_study_status(locked, new_status)
     return locked
 
 
@@ -374,13 +406,18 @@ def summarize_experiment(batch: models.ExperimentBatch) -> dict[str, Any]:
         observed_ga_runs,
         deadline=batch.time_limit_seconds,
     )
-    primary_engine_decision = _primary_engine_decision(
-        algorithm_summaries, comparative_tests
-    )
+    primary_engine_decision = {
+        **_primary_engine_decision(algorithm_summaries, comparative_tests),
+        "evidence_class": "EXPLORATORY",
+        "formal_claimable": False,
+        "formal_conclusion": "No formal conclusion available.",
+    }
     benchmark = _benchmark_summary(batch, runs, algorithm_summaries)
 
     return {
         "protocol_version": PROTOCOL_VERSION,
+        "study_mode": models.ExperimentMode.EXPLORATORY,
+        "formal_conclusion": "No formal conclusion available.",
         "batch": {
             "id": batch.pk,
             "name": batch.name,
@@ -1947,10 +1984,24 @@ def _order_integer(value: Any) -> int:
 
 def _set_batch_status(batch: models.ExperimentBatch, status: str) -> None:
     if batch.status == status:
+        _sync_exploratory_study_status(batch, status)
         return
     batch.status = status
     batch.full_clean()
     batch.save(update_fields=["status", "updated_at"])
+    _sync_exploratory_study_status(batch, status)
+
+
+def _sync_exploratory_study_status(
+    batch: models.ExperimentBatch,
+    status: str,
+) -> None:
+    if not batch.study_id:
+        return
+    models.ExperimentStudy.objects.filter(
+        pk=batch.study_id,
+        mode=models.ExperimentMode.EXPLORATORY,
+    ).update(status=status, updated_at=timezone.now())
 
 
 def _validated_seeds(seeds: Iterable[int]) -> tuple[int, ...]:

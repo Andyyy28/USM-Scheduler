@@ -48,7 +48,7 @@ def test_ga_tuning_plan_randomizes_each_seed_block_and_hashes_full_provenance() 
     plan = _plan()
 
     assert plan["protocol_version"] == "2.0"
-    assert plan["implementation_version"] == "ga-v2"
+    assert plan["implementation_version"] == "ga-v5"
     assert plan["mutable_event_count"] == 3
     assert plan["configuration_count"] == 24
     assert plan["run_count"] == 48
@@ -90,7 +90,7 @@ def test_ga_tuning_selection_is_feasibility_then_penalty_then_rmst() -> None:
     assert selected["ranking"][0]["feasibility_rate"] == 1.0
     assert selected["ranking"][0]["rmst_time_to_feasibility_seconds"] == 1.0
     assert selected["selected_profile"]["frozen"] is True
-    assert selected["selected_profile"]["implementation_version"] == "ga-v2"
+    assert selected["selected_profile"]["implementation_version"] == "ga-v5"
     assert selected["selected_profile"]["selection_hash"] == selected["selection_hash"]
 
 
@@ -149,7 +149,7 @@ def test_tuning_command_scopes_plan_and_recomputes_actual_configuration_hash(
             "max_generations": resolved["max_generations"],
             "implementation_version": resolved["implementation_version"],
         },
-        diagnostics={"metrics": {"implementation_version": "ga-v2"}},
+        diagnostics={"metrics": {"implementation_version": "ga-v5"}},
         objective_value=12,
         first_feasible_seconds=1.5,
         execution_seconds=9.0,

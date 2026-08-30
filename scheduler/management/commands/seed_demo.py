@@ -9,13 +9,21 @@ from io import BytesIO
 from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
 
 from django.core.management.base import BaseCommand, CommandError
+from django.utils import timezone
 from openpyxl import load_workbook
 
 from scheduler import models
 from scheduler.services.imports import build_import_template, commit_import, preview_workbook
+from scheduler.services.trial_data import (
+    TRIAL_DAILY_LOAD_RULE_CODE,
+    TRIAL_FIXED_RULE_CODE,
+    TRIAL_RESERVED_BLOCK_RULE_CODE,
+)
 
 DEMO_OBJECTIVE_NAME = "USM Demo Default"
 DEMO_COLLEGE_CODE = "CSM"
+DEMO_FIXED_RULE_CODE = TRIAL_FIXED_RULE_CODE
+DEMO_DAILY_LOAD_RULE_CODE = TRIAL_DAILY_LOAD_RULE_CODE
 
 
 def _canonicalize_xlsx(content: bytes) -> bytes:
@@ -46,7 +54,12 @@ def _canonicalize_xlsx(content: bytes) -> bytes:
     return output.getvalue()
 
 
-def build_demo_workbook_bytes(*, campus: str = "Kabacan") -> bytes:
+def build_demo_workbook_bytes(
+    *,
+    campus: str = "Kabacan",
+    fixed_rule_hash: str = "0" * 64,
+    daily_load_rule_hash: str = "1" * 64,
+) -> bytes:
     """Build the canonical semester workbook entirely in memory."""
 
     workbook = load_workbook(BytesIO(build_import_template()))
@@ -65,7 +78,7 @@ def build_demo_workbook_bytes(*, campus: str = "Kabacan") -> bytes:
             ["BSCS", "CS101", "2026", "MAJOR", DEMO_COLLEGE_CODE, "DCS", True],
             ["BSCS", "CS102", "2026", "MAJOR", DEMO_COLLEGE_CODE, "DCS", True],
         ],
-        "Sections": [["BSCS-1A", "BSCS", 1, "INCOMING", True]],
+        "Sections": [["BSCS-1A", "BSCS", 1, "INCOMING", 30, True]],
         "Instructors": [
             ["DEMO-FAC-001", "Demo Faculty A", "DCS", True, False],
             ["DEMO-FAC-002", "Demo Faculty B", "DCS", True, True],
@@ -107,6 +120,14 @@ def build_demo_workbook_bytes(*, campus: str = "Kabacan") -> bytes:
         "InstructorAvailability": [
             ["DEMO-FAC-001", 0, 0, True],
             ["DEMO-FAC-001", 0, 1, True],
+        ],
+        "ConstraintPolicyReferences": [
+            [DEMO_FIXED_RULE_CODE, 1, fixed_rule_hash],
+            [DEMO_DAILY_LOAD_RULE_CODE, 1, daily_load_rule_hash],
+        ],
+        "InstructorProfiles": [
+            ["DEMO-FAC-001", 6, False, DEMO_DAILY_LOAD_RULE_CODE, 1],
+            ["DEMO-FAC-002", 6, False, DEMO_DAILY_LOAD_RULE_CODE, 1],
         ],
         "RoomAvailability": [
             ["CSM-101", 0, 0, True],
@@ -198,7 +219,66 @@ class Command(BaseCommand):
                 "status": models.TermStatus.ACTIVE,
             },
         )
-        content = build_demo_workbook_bytes(campus=term.campus)
+        approved_at = timezone.make_aware(datetime(2026, 7, 1, 8, 0))
+        fixed_policy, _ = models.ConstraintPolicyVersion.objects.get_or_create(
+            rule_code=DEMO_FIXED_RULE_CODE,
+            version=1,
+            effective_term=term,
+            defaults={
+                "title": "Fixed 50-student meeting rule",
+                "definition": (
+                    "Every section and combined meeting contains at most 50 students, "
+                    "independent of room type."
+                ),
+                "classification": models.ConstraintKind.HARD,
+                "owner_office": "Office of the University Registrar",
+                "source": "Synthetic demonstration policy for development only",
+                "parameters": {"fixed_student_limit": 50},
+                "is_approved": True,
+                "approved_by": central,
+                "approved_at": approved_at,
+            },
+        )
+        daily_policy, _ = models.ConstraintPolicyVersion.objects.get_or_create(
+            rule_code=DEMO_DAILY_LOAD_RULE_CODE,
+            version=1,
+            effective_term=term,
+            defaults={
+                "title": "Instructor daily teaching-atom limit",
+                "definition": "Each instructor follows the approved maximum daily teaching atoms.",
+                "classification": models.ConstraintKind.HARD,
+                "owner_office": "Office of Academic Affairs",
+                "source": "Synthetic demonstration policy for development only",
+                "parameters": {"unit": "teaching_atom"},
+                "is_approved": True,
+                "approved_by": central,
+                "approved_at": approved_at,
+            },
+        )
+        models.ConstraintPolicyVersion.objects.get_or_create(
+            rule_code=TRIAL_RESERVED_BLOCK_RULE_CODE,
+            version=1,
+            effective_term=term,
+            defaults={
+                "title": "Approved recurring teaching blocks",
+                "definition": (
+                    "Recurring institution, college, department, program, and section blocks "
+                    "remove their approved time atoms from eligible meetings."
+                ),
+                "classification": models.ConstraintKind.HARD,
+                "owner_office": "Office of Academic Affairs",
+                "source": "Synthetic demonstration policy for development only",
+                "parameters": {"applies_to": "recurring_reserved_blocks"},
+                "is_approved": True,
+                "approved_by": central,
+                "approved_at": approved_at,
+            },
+        )
+        content = build_demo_workbook_bytes(
+            campus=term.campus,
+            fixed_rule_hash=fixed_policy.policy_hash,
+            daily_load_rule_hash=daily_policy.policy_hash,
+        )
         batch = preview_workbook(content, term=term, user=central)
         if batch.status == models.ImportStatus.INVALID:
             diagnostics = "; ".join(

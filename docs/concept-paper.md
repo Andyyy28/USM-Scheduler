@@ -13,7 +13,7 @@
 
 University class timetabling requires many interdependent decisions involving active sections, fixed instructors, meeting durations, rooms, laboratories, time periods, availability, and academic-unit rules. A locally acceptable placement can make another meeting impossible because the same instructor, section, or room cannot be used twice at the same time. This study proposes a university scheduling decision-support system for one authorized semester at the University of Southern Mindanao (USM) Kabacan Main Campus. It formalizes stakeholder-provided rules, including explicit college- or offering-unit room authorization, and compares two contrasting optimization approaches: Constraint Programming–SAT (CP-SAT) and a custom Genetic Algorithm (GA).
 
-Both engines will receive the same immutable problem snapshot, legal candidate placements, hard constraints, soft-objective profile, computational budget, and independent validation procedure. Evaluation will prioritize independently verified feasibility, followed by common schedule-quality penalty, time to first feasible solution, success rate, and consistency across repeated runs. The system will preserve human control through college review, locked assignments, child-version regeneration, and central approval. The main contribution is the formal USM constraint model, exact-versus-metaheuristic comparison, algorithm-independent correctness checking, and reproducible experiment—not the administrative data-entry interface. Conclusions will be limited to the authorized campus, term, instances, objective weights, implementation, hardware, and time budget actually tested.
+Both engines will receive the same immutable problem snapshot, legal candidate placements, hard constraints, soft-objective profile, computational budget, and independent validation procedure. Evaluation will use three prespecified primary outcomes: independently verified feasible-generation rate, common raw schedule-quality penalty among feasible results, and censor-aware time to feasibility. The system will preserve human control through college review, locked assignments, child-version regeneration, and central approval. The main contribution is the formal USM constraint model, exact-versus-metaheuristic comparison, algorithm-independent correctness checking, and reproducible experiment—not the administrative data-entry interface. Conclusions will be limited to the authorized campus, term, instances, objective weights, implementation, hardware, and time budget actually tested.
 
 ## Statement of the Problem
 
@@ -82,6 +82,7 @@ The baseline study covers:
 - active incoming, continuing, and graduating sections represented for the selected term;
 - fixed subjects, instructors, teaching loads, meeting occurrences, and durations;
 - section-level conflicts, including shared offerings attached to every affected section;
+- expected enrollment from 1 through 50 for every section and a fixed maximum of 50 students across the unique sections attached to any meeting;
 - configurable 30-minute time atoms;
 - classrooms, laboratories, room capabilities, explicit room authorization, availability, and locks;
 - CP-SAT and one transparent custom GA; and
@@ -90,7 +91,7 @@ The baseline study covers:
 The study excludes:
 
 - instructor assignment and teaching-load construction;
-- room seating capacity or chair counting;
+- variable room seating capacity, chair counting, and floor-space optimization;
 - individual student elective and cross-enrollment conflict optimization;
 - examination timetabling;
 - campus walking distance and multi-campus travel;
@@ -99,7 +100,12 @@ The study excludes:
 - a hybrid CP-SAT/GA algorithm; and
 - an AI chatbot as the scheduling solution.
 
-Student records are optional, pseudonymous administrative data and do not enter the solver or scorer. Participating rooms must be administratively prevalidated as suitable because capacity optimization is excluded.
+Student records are optional, pseudonymous administrative data and do not enter
+the solver or scorer. The frozen section headcount is sufficient. The fixed
+50-student limit applies uniformly to classrooms, laboratories, and
+special-purpose rooms; exactly 50 is valid and 51 or more blocks snapshot
+creation. It is an academic scheduling rule, not a variable physical-capacity
+model. Participating rooms must be administratively prevalidated as suitable.
 
 If USM authorization, a complete term dataset, or approved room-policy definitions are unavailable, the output must be reframed as a synthetic-data prototype evaluation. It must not be presented as evidence of real USM operational performance.
 
@@ -162,7 +168,7 @@ The primary case will be one authorized semester from USM Kabacan Main Campus. T
 
 The source data will be previewed through a versioned XLSX schema. Invalid rows, missing references, duplicates, incomplete availability, invalid duration patterns, unauthorized room rules, and conflicting locks will block transactional commit. A clean revision will be serialized and hashed before solving.
 
-Synthetic data will be used for development, constraint tests, infeasibility tests, stress cases, and GA pilot tuning. Synthetic results will not be mixed with claims about actual USM performance.
+Synthetic data will be used for development, constraint tests, infeasibility tests, stress cases, and equal-budget CP-SAT/GA pilot tuning. Synthetic results will not be mixed with claims about actual USM performance.
 
 ### Common problem representation
 
@@ -189,6 +195,9 @@ Every returned schedule must satisfy all of the following:
 9. Minor and GE offerings follow the approved offering-unit authorization rules.
 10. Repeated sessions in a distinct-day group use different days.
 11. Every active locked assignment is preserved exactly.
+12. Every section and every combined meeting has at most 50 students.
+13. Approved recurring teaching blocks are respected at their declared scope.
+14. Every instructor remains within the approved maximum daily teaching load, or has an approved explicit no-limit acknowledgement.
 
 An independent validator will recheck both common candidate membership and the raw evidence behind availability, duration, capabilities, room kind, authorizations, locks, and resource conflicts.
 
@@ -235,25 +244,43 @@ Fitness is lexicographic:
 
 Any candidate with fewer hard violations outranks one with a better soft score. No arbitrary large hard-penalty constant is used. The GA may find a feasible schedule but cannot prove optimality or infeasibility.
 
-Before real-data testing, one GA configuration will be selected using synthetic-only seeds `2001–2010` over a fixed 24-configuration grid: populations 100/200/400, tournament sizes 3/5, crossover rates 0.80/0.90, and mutation rates `1/N` or `2/N`. Selection priority is feasibility rate, median feasible penalty, then median time. The selected configuration will be frozen before real-data outcomes are inspected.
+Before real-data testing, both engines receive the same 30-minute maximum
+synthetic tuning budget: six configurations × seeds `2001–2005` × 60 seconds.
+The CP-SAT grid is presolve on/off × linearization level `0/1/2`. The GA grid is
+population 100/200/400 × mutation `1/N` or `2/N`, while tournament size 3,
+crossover 0.90, elite fraction 0.05, and 20 repair attempts remain fixed.
+Selection priority is feasibility rate, median feasible raw penalty, RMST to
+feasibility, then configuration hash. Both profiles are frozen before authorized
+term outcomes are inspected, and objective weights are never tuned to favor an
+engine. All 30 runs per algorithm (60 total) in this pilot are exploratory and
+excluded from formal denominators and inference.
 
 ### Controlled experiment
 
 The primary full instance will contain all active authorized offerings in the selected term. Nested 25%, 50%, and 75% instances will be selected deterministically within college/classification strata, with the 100% instance retained as the primary case. Referenced instructors, sections, authorizations, capabilities, availability, and locks will remain consistent.
 
-For every known-feasible instance:
+For each frozen scale instance:
 
 - run one unmeasured warm-up per engine;
 - run CP-SAT and GA with seeds `1001–1030`;
 - use a 300-second wall-clock limit per trial;
-- allocate one logical CPU/worker and identical memory conditions;
+- allocate one CPU, one solver worker, and 2048 MB of memory per fresh-process run;
 - execute algorithms sequentially, never concurrently;
-- randomize algorithm order within seed blocks using a recorded order seed;
+- randomize algorithm order within seed blocks using order seed `20260824`;
 - measure shared preprocessing separately;
 - include algorithm-specific construction in the 300-second budget; and
 - preserve all timeouts, no-solution outcomes, and failures.
 
-The same numeric seed is a reproducibility control, not a statistically paired observation, because the algorithms transform randomness differently.
+The formal matrix contains 240 measured runs across the 25%, 50%, 75%, and 100%
+instances, plus eight persisted but excluded warm-ups, four excluded
+1,800-second CP-SAT feasibility diagnostics, and eight excluded trace runs using
+seed `9001`. All other configurable, synthetic, pilot, and diagnostic batches are
+permanently labelled exploratory and cannot produce the thesis winner.
+
+The preregistered comparison preserves each scale-and-seed CP-SAT/GA block as a
+deterministic pair. This blocking controls the frozen problem instance and run
+order; it does not assume that the two algorithms transform a numeric seed into
+equivalent random behavior.
 
 ### Measures
 
@@ -261,26 +288,40 @@ The same numeric seed is a reproducibility control, not a statistically paired o
 |---|---|
 | Hard violations | Independent vector by type; a collision counts one unique conflicting event pair per resource |
 | Feasible generation | Complete assignment with zero hard violations |
-| Success rate | Feasible measured trials divided by all non-infrastructure trials, with 95% Wilson interval |
+| Feasible-generation rate | Feasible measured trials divided by all eligible trials, with counts and 95% Wilson interval |
 | Time to feasibility | Monotonic time to the first independently valid incumbent; unsuccessful trials censored at 300 seconds |
 | Execution time | Monotonic solver-boundary time, excluding queue/UI delay and shared preprocessing |
 | Schedule quality | Common raw weighted penalty, per-meeting penalty, component breakdown, and secondary normalized score |
 | Consistency | Pairwise normalized placement Hamming distance plus quality/time dispersion |
-| Room utilization | Occupied usable room-time atoms divided by available usable room-time atoms; descriptive, not a capacity measure |
+| Room-time utilization | Occupied usable room-time atoms divided by available usable room-time atoms; descriptive and unrelated to chairs, floor area, or physical capacity |
 | CP-SAT certificate | Best bound, gap, and whether feasibility, optimality, or infeasibility was proven |
 
 ### Statistical analysis and decision rule
 
-Results will report exact sample sizes, medians, interquartile ranges, median absolute deviations, Wilson intervals, bootstrap confidence intervals, label-permutation or preregistered unpaired tests, Vargha–Delaney effect sizes for feasible quality, and Holm correction for the prespecified outcomes. Time to feasibility will use a censor-aware restricted mean through 300 seconds.
+Results will report exact sample sizes, medians, interquartile ranges, median
+absolute deviations, Wilson intervals, deterministic bootstrap confidence
+intervals, Vargha–Delaney effect sizes for feasible quality, and Holm correction
+across the three primary outcomes within each scale. The preregistered
+feasibility comparison uses a two-sided exact paired binary test across complete
+seed blocks. Time to feasibility uses a censor-aware restricted mean through
+300 seconds, a deterministic within-seed swap permutation, and a paired
+bootstrap interval for the RMST difference. Because schedule quality is defined
+only among independently feasible outputs, its comparison uses the declared
+deterministic two-sided label-permutation test of medians rather than discarding
+unmatched feasible schedules.
 
-Engine suitability will be decided lexicographically:
+A preferred engine may be declared only for the complete, protocol-valid 100%
+instance. The decision order is:
 
 1. independently validated feasibility and feasible-generation rate;
-2. common feasible-schedule quality;
-3. time to first feasible schedule; and
-4. consistency and operational behavior.
+2. common feasible-schedule quality; and
+3. censor-aware time to feasibility.
 
 The practical thresholds are a five-percentage-point feasibility difference, a 5% median raw-penalty improvement, and a 10% reduction in restricted mean time to feasibility, subject to the prespecified statistical conditions. If neither engine meets the rule, the conclusion will state that no overall advantage was demonstrated and will report the trade-offs rather than force a winner.
+
+Consistency and operational behavior remain secondary descriptive evidence.
+Incomplete, exploratory, invalid, cancelled, or unclassified studies must show
+“No formal conclusion available.”
 
 ### Software and user validation
 
@@ -348,7 +389,7 @@ Hashes establish integrity and reproducibility but do not anonymize personal dat
 - **Different guarantees:** CP-SAT may prove optimality or infeasibility; GA cannot. The report must preserve this distinction.
 - **Hardware and software effects:** results apply to the recorded build, machine, worker count, and deadline.
 - **Section aggregation:** individual elective conflicts are not represented.
-- **Capacity exclusion:** room-time utilization is not seat utilization or proof of seating adequacy.
+- **Physical-capacity exclusion:** the fixed 50-student rule is not chair, floor-area, or variable room-capacity validation; room-time utilization is not seat utilization or proof of physical suitability.
 - **Prototype governance:** the interface and logo do not imply official adoption.
 
 ## References and Official Context Sources

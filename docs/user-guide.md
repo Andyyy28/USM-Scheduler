@@ -28,7 +28,13 @@ Both optimization engines use the same frozen input:
 
 The system checks instructor, section, and room conflicts; availability; contiguous duration; laboratory capabilities; college or offering-unit room authorization; distinct-day rules; and active locks. Faculty preferences, internal vacant periods, and daily-load balance may be scored as soft objectives.
 
-Room capacity, individual student elective conflicts, examinations, walking distance, inter-campus travel, and instructor assignment are outside the thesis baseline.
+Every section and combined meeting uses a fixed maximum of 50 students; exactly
+50 is accepted and 51 or more blocks formal snapshot creation. This applies to
+classrooms, laboratories, and special-purpose rooms. It is not chair, floor-area,
+or variable room-capacity validation, so participating rooms must be
+administratively prevalidated. Individual student elective conflicts,
+examinations, walking distance, inter-campus travel, and instructor assignment
+remain outside the thesis baseline.
 
 ## 2. Roles and authority
 
@@ -160,14 +166,21 @@ All demonstration names and codes are fictional research fixtures. They are not 
 ### 5.2 Full synthetic trial workbook
 
 For a more realistic hands-on test, sign in as `demo-scheduler`, open **Data
-import**, and choose **Download test workbook**. The same deterministic file is
-tracked at `examples/USM-Scheduler-Synthetic-Trial-v1.xlsx` and can be rebuilt
-with:
+import**, select the target term under **Practice workbook**, and choose
+**Download practice workbook**. The schema 1.1 file freezes that term's existing
+approved policy hashes; import it into the same term. The downloader never
+creates or approves policies. After `seed_demo`, it can also be generated with:
 
 ```powershell
 python manage.py create_trial_workbook `
-  --output .\examples\USM-Scheduler-Synthetic-Trial-v1.xlsx
+  --term-id 1 --output .\USM-Scheduler-Synthetic-Trial-v2.xlsx
 ```
+
+The tracked `examples/USM-Scheduler-Synthetic-Trial-v1.xlsx` remains a legacy
+exploratory fixture. It lacks thesis-v2 enrollment and policy evidence and must
+not be used for the formal pilot. The v2 fixture requires approved v1 policies
+`FIXED_STUDENT_LIMIT_50`, `INSTRUCTOR_DAILY_LOAD`, and `RECURRING_RESERVED_BLOCKS`
+for the selected term; the demo setup labels these policies as synthetic.
 
 The workbook contains 14 required meetings across five sections and 11 course
 offerings. It deliberately exercises:
@@ -205,13 +218,14 @@ To try it:
 
 After signing in, the left navigation contains:
 
-- **Overview:** current term, data counts, recent runs, and pending reviews;
-- **Academic terms:** term registry, term cloning, and revision finalization;
-- **Generate schedule:** preflight, individual solver runs, experiment batches, and run history;
+- **Home:** current term, data counts, recent runs, and pending reviews;
+- **Academic Terms:** term registry, term cloning, and revision finalization;
+- **Generate Schedule:** preflight, individual solver runs, and run history;
 - **Timetables:** versioned assignments, validation, locking, review, approval, and export;
-- **Data import:** XLSX template, synthetic trial download, preview, errors, and transactional commit (central roles only);
+- **Prepare Data:** XLSX template, term-specific synthetic trial download, preview, errors, and transactional commit (central roles only);
 - **Reviews:** college endorsement and change-request queue;
 - **Help and user guide:** role guidance, solver-status explanations, downloads, and troubleshooting; and
+- **Research tools:** separate Formal Study and Exploratory Analysis workflows, outcome tables, excluded diagnostic traces, and evidence downloads; and
 - **Django administration:** visible to staff administrators through the user menu.
 
 The interface supports keyboard navigation and responsive layouts. Use the “Skip to main content” link when navigating by keyboard.

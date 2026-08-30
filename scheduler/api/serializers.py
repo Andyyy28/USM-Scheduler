@@ -45,6 +45,40 @@ class ProblemSnapshotSerializer(serializers.ModelSerializer):
         ]
 
 
+class ExperimentStudySerializer(serializers.ModelSerializer):
+    batch_count = serializers.IntegerField(source="batches.count", read_only=True)
+    run_count = serializers.SerializerMethodField()
+
+    class Meta:
+        model = models.ExperimentStudy
+        fields = [
+            "id",
+            "name",
+            "mode",
+            "protocol_version",
+            "status",
+            "source_snapshot_id",
+            "scale_percentages",
+            "seeds",
+            "order_seed",
+            "deadline_seconds",
+            "cpu_limit",
+            "memory_limit_mb",
+            "warmups_per_algorithm_scale",
+            "manifest_hash",
+            "protocol_integrity",
+            "invalid_reason",
+            "batch_count",
+            "run_count",
+            "created_at",
+            "updated_at",
+            "cancelled_at",
+        ]
+
+    def get_run_count(self, obj):
+        return models.ScheduleRun.objects.filter(experiment_batch__study=obj).count()
+
+
 class ExperimentBatchSerializer(serializers.ModelSerializer):
     run_count = serializers.IntegerField(source="runs.count", read_only=True)
 
@@ -91,10 +125,14 @@ class ScheduleRunSerializer(serializers.ModelSerializer):
         model = models.ScheduleRun
         fields = [
             "id", "snapshot_id", "experiment_batch_id", "algorithm", "algorithm_display",
-            "seed", "status", "configuration", "queued_at", "started_at", "finished_at",
+            "seed", "purpose", "pair_attempt", "planned_order", "actual_order",
+            "replacement_for_id", "included_in_analysis", "exclusion_reason", "status",
+            "configuration", "configuration_hash", "queued_at", "started_at", "finished_at",
             "first_feasible_seconds", "execution_seconds", "objective_value", "best_bound",
             "relative_gap", "hard_violation_count", "stopping_reason", "diagnostics",
-            "error_message", "metrics", "validation", "schedule_version_id",
+            "process_cpu_seconds", "peak_rss_mb", "failure_category",
+            "failure_classified_at", "error_message", "metrics", "validation",
+            "schedule_version_id",
         ]
 
     def get_validation(self, obj):

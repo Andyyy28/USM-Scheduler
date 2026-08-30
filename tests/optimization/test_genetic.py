@@ -15,7 +15,7 @@ from scheduler.domain import (
     SolverStatus,
 )
 from scheduler.solvers import GeneticAlgorithmSolver
-from scheduler.solvers.genetic import _cache_capacity, _randomized_greedy
+from scheduler.solvers.genetic import _cache_capacity, _Evaluation, _randomized_greedy, _repair
 
 
 def config(seed: int = 1001) -> SolverConfig:
@@ -127,10 +127,10 @@ def test_ga_default_mutation_uses_only_mutable_events_and_caps_at_one(
 
     assert metrics["mutable_event_count"] == 1
     assert metrics["mutation_rate"] == 1.0
-    assert metrics["implementation_version"] == "ga-v2"
+    assert metrics["implementation_version"] == "ga-v5"
 
 
-def test_ga_allows_one_initial_incumbent_then_honors_tiny_deadline(
+def test_ga_does_not_evaluate_when_construction_starts_after_deadline(
     balanced_problem: ProblemInstance,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -147,9 +147,35 @@ def test_ga_allows_one_initial_incumbent_then_honors_tiny_deadline(
     result = GeneticAlgorithmSolver().solve(balanced_problem, tiny)
     metrics = dict(result.metrics)
 
-    assert metrics["initial_population_size"] == 1
-    assert metrics["evaluated_chromosomes"] == 1
-    assert result.assignments
+    assert metrics["initial_population_size"] == 0
+    assert metrics["evaluated_chromosomes"] == 0
+    assert result.assignments == ()
+    assert result.first_feasible_seconds is None
+    assert not result.validation.feasible
+
+
+def test_ga_rejects_initial_evaluation_scored_after_deadline(
+    balanced_problem: ProblemInstance, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scheduler.solvers import genetic
+
+    clock = [0.0]
+    original_score = genetic.score_schedule
+
+    def late_score(problem, assignments, **kwargs):
+        score = original_score(problem, assignments, **kwargs)
+        clock[0] = 2.0
+        return score
+
+    monkeypatch.setattr(genetic, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(genetic, "score_schedule", late_score)
+    result = GeneticAlgorithmSolver().solve(
+        balanced_problem, dataclasses.replace(config(), time_limit_seconds=1),
+    )
+    assert dict(result.metrics)["evaluated_chromosomes"] == 1
+    assert result.assignments == ()
+    assert result.first_feasible_seconds is None
+    assert not result.validation.feasible
 
 
 def test_ga_exhausts_a_cacheable_small_search_space_without_proof_claim(
@@ -194,6 +220,82 @@ def test_ga_cache_capacity_tracks_five_million_genes_with_safe_bounds() -> None:
     assert _cache_capacity(100) == 50_000
     assert _cache_capacity(50_000) == 100
     assert _cache_capacity(10_000_000) == 100
+
+
+def test_ga_records_observed_repair_success_and_failure() -> None:
+    event = MeetingEvent(
+        event_id="repair-event", duration_atoms=1, section_ids=("S1",), instructor_ids=("I1",),
+        candidates=(_candidate("bad", "MON", "MON0"), _candidate("good", "TUE", "TUE0")),
+    )
+
+    def evaluate(chromosome):
+        return _Evaluation((int(chromosome[0] == 0), 0), (0,))
+
+    success: dict[str, int] = {}
+    assert _repair((event,), (0,), {}, 1, evaluate, Random(1), float("inf"), success) == (1,)
+    assert success["repair_needed"] == success["repair_successes"] == 1
+    assert success["repair_candidate_evaluations"] == 1
+    failure: dict[str, int] = {}
+    assert _repair((event,), (0,), {}, 0, evaluate, Random(1), float("inf"), failure) == (0,)
+    assert failure["repair_failures"] == 1
+
+
+def test_ga_records_actual_mutated_genes(balanced_problem: ProblemInstance) -> None:
+    observed = GeneticAlgorithmSolver().solve(
+        balanced_problem,
+        dataclasses.replace(config(), population_size=2, tournament_size=2, max_generations=1, mutation_rate=1),
+    )
+    metrics = dict(observed.metrics)
+    assert metrics["mutation_operations"] >= metrics["mutated_offspring"] > 0
+    assert metrics["repair_calls"] > 0
+
+
+def test_repair_prioritizes_removing_a_conflict_over_an_earlier_soft_improvement(
+    balanced_problem: ProblemInstance,
+) -> None:
+    from scheduler.domain import score_schedule, validate_schedule
+
+    events = (
+        MeetingEvent(
+            "E1", 1, (), (),
+            (
+                _candidate("E1-EXPENSIVE", "MON", "MON0", preference_penalty=10),
+                _candidate("E1-CHEAP", "MON", "MON0"),
+            ),
+        ),
+        MeetingEvent(
+            "E2", 1, (), (),
+            (
+                _candidate("E2-CONFLICT", "MON", "MON0"),
+                _candidate("E2-FREE", "TUE", "TUE0", preference_penalty=100),
+            ),
+        ),
+    )
+    problem = dataclasses.replace(
+        balanced_problem,
+        events=events,
+        objective_profile=dataclasses.replace(
+            balanced_problem.objective_profile,
+            preference_weight=1, section_gap_weight=0, instructor_gap_weight=0,
+            load_imbalance_weight=0,
+        ),
+    )
+
+    def evaluate(chromosome):
+        assignments = tuple(
+            Assignment(event.event_id, event.candidates[gene].candidate_id)
+            for event, gene in zip(events, chromosome, strict=True)
+        )
+        validation = validate_schedule(problem, assignments)
+        return _Evaluation(
+            (validation.hard_violation_count, score_schedule(problem, assignments).weighted_total),
+            (0, 1) if not validation.feasible else (),
+        )
+
+    assert evaluate((0, 0)).fitness == (1, 10)
+    assert evaluate((1, 0)).fitness == (1, 0)
+    repaired = _repair(events, (0, 0), {}, 1, evaluate, Random(1), float("inf"))
+    assert evaluate(repaired).fitness == (0, 110)
 
 
 def _candidate(

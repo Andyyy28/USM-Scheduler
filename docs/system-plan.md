@@ -74,7 +74,10 @@ The independent validator handles output completeness and cross-event room/instr
 - **Repair/elitism:** bounded conflict repair and top 5% preservation; record evaluated chromosomes, generations, and final fitness.
 - **Claim limit:** GA can find a feasible schedule but cannot prove optimality or infeasibility.
 
-Fair comparison uses the same snapshot/objective/deadline/CPU/seed set, a separate pilot for GA tuning, randomized within-block run order, and one independent validator/scorer. See [Experiment protocol](experiment-protocol.md).
+Fair comparison uses the same snapshot, approved rule and objective manifests,
+deadline, CPU/memory allocation, seed set, randomized within-block order, and
+independent validator/scorer. CP-SAT and GA receive equal synthetic pilot budgets
+before both profiles are frozen. See [Experiment protocol](experiment-protocol.md).
 
 ## 5. System modules
 
@@ -137,6 +140,12 @@ Metrics are precisely defined in [Experiment protocol](experiment-protocol.md):
 - pairwise normalized-Hamming consistency; and
 - occupied/available usable room-time utilization, disclosed as mainly descriptive when fixed meeting demand makes it constant.
 
+The three primary outcomes are feasible-generation rate, common raw soft penalty
+among feasible schedules, and censor-aware time to feasibility. Formal studies
+use deterministic nested 25%, 50%, 75%, and 100% demand snapshots; configurable,
+synthetic, tuning, and diagnostic batches remain exploratory and cannot declare
+the thesis winner.
+
 Analysis uses preregistered unpaired feasibility/time/quality comparisons, bootstrap intervals, effect sizes, Holm correction, full distributions, and a preregistered lexicographic primary-engine rule. Its fixed practical thresholds are a five-percentage-point feasibility-rate difference, a 5% median raw-penalty reduction, and a 10% RMST-to-feasibility reduction. Proven instance infeasibility is separated from search failure.
 
 ## 7. Development roadmap
@@ -160,4 +169,10 @@ Add only after the baseline hard rules and comparison are stable:
 5. reproducible de-identified result export and figures; and
 6. ICS/PDF calendar output for an approved schedule.
 
-Defer walking distance, seat capacity, real-time enrollment, automated negotiation, predictive AI/chatbot, and multi-campus travel. They change the research question or require data not established by the concept paper.
+Enforce one fixed academic maximum of 50 students per section and per combined
+meeting across every participating room type. This is not a variable room,
+chair, seat, or floor-space capacity model; rooms are administratively
+prevalidated. Defer variable physical-capacity optimization, walking distance,
+real-time enrollment, automated negotiation, predictive AI/chatbot, and
+multi-campus travel because they change the research question or require data
+not established by the concept paper.

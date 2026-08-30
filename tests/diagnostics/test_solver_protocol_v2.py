@@ -2,16 +2,23 @@ from __future__ import annotations
 
 import json
 import math
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 
 import pytest
+from django.utils import timezone
 
 from scheduler import models
 from scheduler.domain import SolverAlgorithm, SolverConfig, SolverStatus
 from scheduler.services.imports import commit_import, preview_workbook
 from scheduler.services.problem_builder import build_and_store_snapshot
-from scheduler.services.trial_data import build_trial_workbook_bytes
+from scheduler.services.trial_data import (
+    TRIAL_DAILY_LOAD_RULE_CODE,
+    TRIAL_FIXED_RULE_CODE,
+    TRIAL_RESERVED_BLOCK_RULE_CODE,
+    approved_trial_policy_hashes,
+    build_trial_workbook_bytes,
+)
 from scheduler.services.tuning import (
     GA_TUNING_SEEDS,
     build_ga_tuning_plan,
@@ -47,7 +54,31 @@ def test_full_v2_matrix_and_five_seed_smoke_write_diagnostic_artifact() -> None:
         starts_on=date(2026, 8, 1),
         ends_on=date(2026, 12, 20),
     )
-    batch = preview_workbook(build_trial_workbook_bytes(), term, user)
+    approved_at = timezone.make_aware(datetime(2026, 7, 1, 8, 0))
+    for code, parameters in (
+        (TRIAL_FIXED_RULE_CODE, {"fixed_student_limit": 50}),
+        (TRIAL_DAILY_LOAD_RULE_CODE, {"unit": "teaching_atom"}),
+        (TRIAL_RESERVED_BLOCK_RULE_CODE, {"applies_to": "recurring_reserved_blocks"}),
+    ):
+        models.ConstraintPolicyVersion.objects.create(
+            rule_code=code,
+            version=1,
+            title=f"Synthetic {code}",
+            definition=f"Synthetic diagnostic policy for {code}.",
+            classification=models.ConstraintKind.HARD,
+            owner_office="Synthetic diagnostic office",
+            source="Synthetic diagnostic evidence only",
+            effective_term=term,
+            parameters=parameters,
+            is_approved=True,
+            approved_by=user,
+            approved_at=approved_at,
+        )
+    batch = preview_workbook(
+        build_trial_workbook_bytes(**approved_trial_policy_hashes(term)),
+        term,
+        user,
+    )
     revision = commit_import(batch, user)
     objective = models.ObjectiveProfile.objects.create(
         name="Synthetic diagnostic objective",
@@ -169,7 +200,7 @@ def test_full_v2_matrix_and_five_seed_smoke_write_diagnostic_artifact() -> None:
             "do not combine with the formal protocol."
         ),
         "dataset": {
-            "name": "USM-Scheduler-Synthetic-Trial-v1",
+            "name": "USM-Scheduler-Synthetic-Trial-v2",
             "meeting_count": len(problem.events),
             "mutable_event_count": plan["mutable_event_count"],
             "snapshot_hash": snapshot.snapshot_hash,

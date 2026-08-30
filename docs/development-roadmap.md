@@ -9,7 +9,9 @@ The roadmap uses seven thesis phases. Each phase ends with evidence and an exit 
 - Interview the university scheduling office and designated college representatives.
 - Obtain written authorization for the exact term data and define retention/de-identification.
 - Create an authoritative rule catalogue for major/minor/GE classification, offering unit, room authorization, shared laboratories, availability, meeting duration/recurrence, breaks, and locks.
-- Confirm the system boundary: section-level timetabling, no walking distance, no seat capacity, no automated final approval.
+- Confirm the system boundary: section-level timetabling with a fixed maximum of
+  50 students per section/combined meeting, no variable room/chair/floor-space
+  capacity model, no walking distance, and no automated final approval.
 - Write acceptance examples for every hard rule and approve the experimental protocol.
 
 **Deliverables:** signed requirements/rule matrix, data-sharing approval, sample de-identified workbook, scope statement, risk register, wireframes, preregistered metrics.
@@ -73,7 +75,9 @@ The roadmap uses seven thesis phases. Each phase ends with evidence and an exit 
 
 - Freeze authorized full/scaling snapshots, objective profile, configurations, seeds, execution order, machine/build, and analysis scripts.
 - Run all comparison-block trials sequentially; retain timeouts, failures, and no-solution results.
-- Calculate Wilson intervals, RMST, preregistered unpaired tests, effect sizes, Holm corrections, consistency, retries, and descriptive utilization.
+- Calculate Wilson intervals, RMST, preregistered unpaired tests, effect sizes,
+  Holm correction across the three primary outcomes, consistency, retries, and
+  descriptive room-time utilization.
 - Apply the preregistered primary-engine decision rule and sensitivity analysis.
 
 **Deliverables:** immutable experiment batches, trial-level de-identified export, tables/figures, statistical notebook/script, interpretation and threats-to-validity section.
@@ -127,4 +131,7 @@ These add thesis value without changing the central question:
 5. **Reproducible result export:** de-identified CSV/JSON and charts containing hashes, seeds, timings, statuses, violations, and quality components.
 6. **Calendar export:** ICS/PDF output only after an approved schedule exists.
 
-Defer walking-distance optimization, capacity/seat optimization, real-time student registration, automated faculty negotiation, predictive AI, and multi-campus travel until after the thesis baseline.
+Defer walking-distance optimization, variable physical-capacity/chair/seat
+optimization, real-time student registration, automated faculty negotiation,
+predictive AI, and multi-campus travel until after the thesis baseline. The
+fixed 50-student scheduling rule remains in scope.

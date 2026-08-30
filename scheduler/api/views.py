@@ -20,6 +20,7 @@ from scheduler.api.permissions import IsCentralScheduler, IsSchedulerUser
 from scheduler.api.serializers import (
     AcademicTermSerializer,
     ExperimentBatchSerializer,
+    ExperimentStudySerializer,
     ImportBatchSerializer,
     ObjectiveProfileSerializer,
     ProblemSnapshotSerializer,
@@ -49,6 +50,23 @@ def _translate_domain_error(exc: Exception) -> None:
     if isinstance(exc, ValueError):
         raise ValidationError(str(exc)) from exc
     raise exc
+
+
+def _formal_study_error_response(exc: Exception) -> Response:
+    """Keep formal-protocol failures machine readable for research tooling."""
+
+    from scheduler.services.formal_studies import FormalStudyError
+
+    if not isinstance(exc, FormalStudyError):
+        _translate_domain_error(exc)
+    return Response(
+        {
+            "code": "FORMAL_STUDY_ERROR",
+            "detail": str(exc),
+            "issues": [issue.to_dict() for issue in exc.issues],
+        },
+        status=status.HTTP_400_BAD_REQUEST,
+    )
 
 
 class HealthView(APIView):
@@ -165,17 +183,34 @@ class TrialWorkbookView(APIView):
     def get(self, request):
         from scheduler.services.trial_data import (
             TRIAL_WORKBOOK_FILENAME,
+            TrialPolicyConfigurationError,
+            approved_trial_policy_hashes,
             build_trial_workbook_bytes,
         )
 
+        term_id = request.query_params.get("term_id")
+        if not term_id:
+            raise ValidationError(
+                {"term_id": "Choose the target academic term so approved policy hashes can be embedded."}
+            )
+        try:
+            term_id = int(term_id)
+        except (TypeError, ValueError) as exc:
+            raise ValidationError({"term_id": "Enter a valid academic-term ID."}) from exc
+        term = get_object_or_404(models.AcademicTerm, pk=term_id)
+        try:
+            policy_hashes = approved_trial_policy_hashes(term)
+        except TrialPolicyConfigurationError as exc:
+            raise ValidationError({"term_id": str(exc)}) from exc
         response = HttpResponse(
-            build_trial_workbook_bytes(),
+            build_trial_workbook_bytes(campus=term.campus, **policy_hashes),
             content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
         response["Content-Disposition"] = (
             f'attachment; filename="{TRIAL_WORKBOOK_FILENAME}"'
         )
         response["X-Content-Type-Options"] = "nosniff"
+        response["X-USM-Target-Term-ID"] = str(term.pk)
         return response
 
 
@@ -796,3 +831,240 @@ class ExperimentExportView(APIView):
             f'attachment; filename="experiment-{batch.pk}.{export_format}"'
         )
         return response
+
+
+class FormalStudyListCreateView(APIView):
+    """List formal studies or create the preregistered v2 protocol."""
+
+    permission_classes = [IsSchedulerUser]
+
+    def get(self, request):
+        queryset = (
+            models.ExperimentStudy.objects.filter(mode=models.ExperimentMode.FORMAL)
+            .select_related("source_snapshot")
+            .prefetch_related("batches")
+        )
+        if request.query_params.get("status"):
+            queryset = queryset.filter(status=request.query_params["status"])
+        if request.query_params.get("source_snapshot_id"):
+            queryset = queryset.filter(
+                source_snapshot_id=request.query_params["source_snapshot_id"]
+            )
+        return Response(ExperimentStudySerializer(queryset, many=True).data)
+
+    def post(self, request):
+        from scheduler.services.formal_studies import create_formal_study
+
+        if not IsCentralScheduler().has_permission(request, self):
+            raise PermissionDenied("Central scheduler access is required.")
+        source_snapshot_id = request.data.get("source_snapshot_id")
+        if source_snapshot_id in {None, ""}:
+            raise ValidationError(
+                {"source_snapshot_id": "A schema 1.2 source snapshot is required."}
+            )
+        snapshot = get_object_or_404(models.ProblemSnapshot, pk=source_snapshot_id)
+        solver_profiles = request.data.get("solver_profiles")
+        if isinstance(solver_profiles, str):
+            try:
+                solver_profiles = json.loads(solver_profiles)
+            except json.JSONDecodeError as exc:
+                raise ValidationError(
+                    {"solver_profiles": "Enter a valid JSON object."}
+                ) from exc
+        # The tuning command emits a complete, checksum-bearing selection
+        # artifact. Accept that artifact directly while retaining support for
+        # callers that submit only its selected_profiles object.
+        if isinstance(solver_profiles, dict) and isinstance(
+            solver_profiles.get("selected_profiles"), dict
+        ):
+            solver_profiles = solver_profiles["selected_profiles"]
+        try:
+            scaling_seed = int(request.data.get("scaling_seed", 20260824))
+        except (TypeError, ValueError) as exc:
+            raise ValidationError(
+                {"scaling_seed": "Use a non-negative integer."}
+            ) from exc
+        try:
+            study = create_formal_study(
+                source_snapshot=snapshot,
+                actor=request.user,
+                solver_profiles=solver_profiles,
+                name=request.data.get("name") or None,
+                scaling_seed=scaling_seed,
+            )
+        except Exception as exc:
+            return _formal_study_error_response(exc)
+        return Response(
+            ExperimentStudySerializer(study).data,
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class FormalStudyDetailView(APIView):
+    permission_classes = [IsSchedulerUser]
+
+    def get(self, request, study_id: int):
+        from scheduler.services.formal_studies import inspect_formal_study
+
+        study = get_object_or_404(
+            models.ExperimentStudy.objects.filter(mode=models.ExperimentMode.FORMAL),
+            pk=study_id,
+        )
+        try:
+            return Response(inspect_formal_study(study))
+        except Exception as exc:
+            return _formal_study_error_response(exc)
+
+
+class FormalStudyValidateView(APIView):
+    permission_classes = [IsCentralScheduler]
+
+    def post(self, request, study_id: int):
+        from scheduler.services.formal_studies import validate_formal_study
+
+        study = get_object_or_404(
+            models.ExperimentStudy.objects.filter(mode=models.ExperimentMode.FORMAL),
+            pk=study_id,
+        )
+        try:
+            result = validate_formal_study(study, actor=request.user)
+        except Exception as exc:
+            return _formal_study_error_response(exc)
+        return Response(result)
+
+
+class FormalStudyQueueView(APIView):
+    permission_classes = [IsCentralScheduler]
+
+    def post(self, request, study_id: int):
+        from scheduler.services.formal_studies import (
+            inspect_formal_study,
+            queue_formal_study,
+        )
+
+        study = get_object_or_404(
+            models.ExperimentStudy.objects.filter(mode=models.ExperimentMode.FORMAL),
+            pk=study_id,
+        )
+        try:
+            study = queue_formal_study(study, actor=request.user)
+            payload = inspect_formal_study(study)
+        except Exception as exc:
+            return _formal_study_error_response(exc)
+        return Response(payload, status=status.HTTP_202_ACCEPTED)
+
+
+class FormalStudyCancelView(APIView):
+    permission_classes = [IsCentralScheduler]
+
+    def post(self, request, study_id: int):
+        from scheduler.services.formal_studies import (
+            cancel_formal_study,
+            inspect_formal_study,
+        )
+
+        study = get_object_or_404(
+            models.ExperimentStudy.objects.filter(mode=models.ExperimentMode.FORMAL),
+            pk=study_id,
+        )
+        try:
+            study = cancel_formal_study(study, actor=request.user)
+            payload = inspect_formal_study(study)
+        except Exception as exc:
+            return _formal_study_error_response(exc)
+        return Response(payload)
+
+
+class FormalStudyAnalysisView(APIView):
+    permission_classes = [IsSchedulerUser]
+
+    def get(self, request, study_id: int):
+        from scheduler.services.research_metrics import analyze_experiment_study
+
+        study = get_object_or_404(
+            models.ExperimentStudy.objects.filter(mode=models.ExperimentMode.FORMAL),
+            pk=study_id,
+        )
+        try:
+            return Response(analyze_experiment_study(study))
+        except Exception as exc:
+            return _formal_study_error_response(exc)
+
+
+class FormalStudyEvidenceView(APIView):
+    permission_classes = [IsCentralScheduler]
+
+    def get(self, request, study_id: int):
+        import hashlib
+
+        from scheduler.services.formal_studies import formal_evidence_bundle
+
+        study = get_object_or_404(
+            models.ExperimentStudy.objects.filter(mode=models.ExperimentMode.FORMAL),
+            pk=study_id,
+        )
+        try:
+            content, filename = formal_evidence_bundle(study)
+        except Exception as exc:
+            return _formal_study_error_response(exc)
+        response = HttpResponse(content, content_type="application/zip")
+        response["Content-Disposition"] = f'attachment; filename="{filename}"'
+        response["Content-Length"] = str(len(content))
+        response["X-Evidence-SHA256"] = hashlib.sha256(content).hexdigest()
+        response["X-Content-Type-Options"] = "nosniff"
+        return response
+
+
+class FormalRunFailureClassificationView(APIView):
+    permission_classes = [IsCentralScheduler]
+
+    def post(self, request, run_id: int):
+        from scheduler.services.formal_studies import classify_run_failure
+
+        run = get_object_or_404(
+            models.ScheduleRun.objects.select_related("experiment_batch__study"),
+            pk=run_id,
+        )
+        category = str(request.data.get("category", "")).strip().upper()
+        reason = str(request.data.get("reason", "")).strip()
+        try:
+            run = classify_run_failure(
+                run,
+                actor=request.user,
+                category=category,
+                reason=reason,
+            )
+        except Exception as exc:
+            return _formal_study_error_response(exc)
+        return Response(ScheduleRunSerializer(run).data)
+
+
+class FormalRunPairedReplacementView(APIView):
+    permission_classes = [IsCentralScheduler]
+
+    def post(self, request, run_id: int):
+        from scheduler.services.formal_studies import (
+            create_paired_infrastructure_replacement,
+        )
+
+        run = get_object_or_404(
+            models.ScheduleRun.objects.select_related("experiment_batch__study"),
+            pk=run_id,
+        )
+        try:
+            replacements = create_paired_infrastructure_replacement(
+                run,
+                actor=request.user,
+            )
+        except Exception as exc:
+            return _formal_study_error_response(exc)
+        return Response(
+            {
+                "pair_attempt": 2,
+                "replacement_runs": ScheduleRunSerializer(
+                    replacements,
+                    many=True,
+                ).data,
+            },
+            status=status.HTTP_201_CREATED,
+        )

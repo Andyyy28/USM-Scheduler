@@ -1,22 +1,176 @@
 {% extends 'scheduler/base.html' %}
 
 {% block content %}
-<header class="page-header">
-  <div><p class="eyebrow">Advanced</p><h1>Research tools</h1><p>Run controlled algorithm comparisons and inspect reproducibility evidence for the thesis evaluation.</p></div>
-  <div class="page-actions"><a class="button button--secondary" href="{% url 'scheduler:runs' %}">Routine schedule generation</a><a class="button button--secondary" href="{% url 'scheduler:run-comparison' %}">Compare two runs</a></div>
+<header class="page-header research-header">
+  <div>
+    <p class="eyebrow">Thesis experimental platform</p>
+    <h1>Research tools</h1>
+    <p>Compare CP-SAT and the Genetic Algorithm on frozen, identical scheduling problems without affecting routine timetable work.</p>
+  </div>
+  <div class="page-actions">
+    <a class="button button--secondary" href="{% url 'scheduler:runs' %}">Routine schedule generation</a>
+    <a class="button button--secondary" href="{% url 'scheduler:run-comparison' %}">Compare two runs</a>
+  </div>
 </header>
 
-<section class="callout callout--warning"><div><strong>These tools are not required for normal scheduling.</strong><p>Use them only for formal CP-SAT and Genetic Algorithm evaluation. They can create many sequential solver runs.</p></div></section>
+<nav class="research-workflow-nav" aria-label="Research workflow">
+  <a href="{% url 'scheduler:research' %}?workflow=formal" {% if selected_workflow == 'formal' %}aria-current="page"{% endif %}>
+    <span>Formal Study</span>
+    <small>Preregistered thesis evidence</small>
+  </a>
+  <a href="{% url 'scheduler:research' %}?workflow=exploratory" {% if selected_workflow == 'exploratory' %}aria-current="page"{% endif %}>
+    <span>Exploratory Analysis</span>
+    <small>Configurable development runs</small>
+  </a>
+</nav>
+
+{% if selected_workflow == 'formal' %}
+<section class="research-protocol" aria-labelledby="formal-protocol-title">
+  <div class="research-protocol__intro">
+    <p class="eyebrow">Locked protocol v2</p>
+    <h2 id="formal-protocol-title">One study, four nested demand levels</h2>
+    <p>Only a complete, protocol-valid 100% instance may support a formal conclusion. Every measured seed uses the same frozen snapshot, objective, deadline, and implementation evidence for both algorithms.</p>
+  </div>
+  <dl class="research-protocol__facts">
+    <div><dt>Demand levels</dt><dd>25 · 50 · 75 · 100%</dd></div>
+    <div><dt>Measured trials</dt><dd>240</dd></div>
+    <div><dt>Seeds</dt><dd>1001–1030</dd></div>
+    <div><dt>Run budget</dt><dd>300 s · 1 CPU · 2 GB</dd></div>
+  </dl>
+</section>
+
+<section class="callout callout--info" role="note">
+  <div>
+    <strong>Formal conclusions are gated, not inferred from a single good run.</strong>
+    <p>Feasibility, feasible-schedule penalty, and time to feasibility are evaluated separately with uncertainty and Holm-adjusted comparisons. Warm-ups and diagnostic traces remain visible but excluded.</p>
+  </div>
+</section>
+
+{% if is_central %}
+<section class="panel form-panel formal-study-create" id="new-formal-study" aria-labelledby="new-formal-study-title">
+  <div class="panel__header">
+    <div>
+      <p class="eyebrow">Formal Study</p>
+      <h2 id="new-formal-study-title">Freeze the preregistered comparison</h2>
+      <p class="muted">Creates four nested instances and the complete 260-run audit matrix. Runs remain stopped until formal preflight passes.</p>
+    </div>
+    <span class="tag">Controlled creation</span>
+  </div>
+  <form class="form-grid research-form formal-study-create__form" action="{% url 'api:formal-studies' %}" method="post" data-api-form data-success-url="{% url 'scheduler:research' %}?workflow=formal" data-success-message="Formal study frozen. Opening the study register…">
+    {% csrf_token %}
+    <div class="field">
+      <label for="formal-source-snapshot">Schema 1.2 source snapshot</label>
+      <select id="formal-source-snapshot" name="source_snapshot_id" required>
+        <option value="">Choose an eligible snapshot</option>
+        {% for snapshot in formal_snapshots %}<option value="{{ snapshot.id }}">{{ snapshot.term }} · {{ snapshot.short_hash }} · {{ snapshot.event_count }} meetings</option>{% endfor %}
+      </select>
+      <small>Preflight will still verify enrollment, policies, availability, daily limits, hashes, and candidate domains.</small>
+    </div>
+    <div class="field">
+      <label for="formal-study-name">Study name</label>
+      <input id="formal-study-name" name="name" type="text" maxlength="200" placeholder="USM CP-SAT vs GA formal study">
+      <small>Use a term-specific, de-identified title.</small>
+    </div>
+    <div class="field">
+      <label for="formal-scaling-seed">Scaling seed</label>
+      <input id="formal-scaling-seed" name="scaling_seed" type="number" min="0" step="1" value="20260824" required>
+      <small>Frozen with the nested 25%, 50%, 75%, and 100% offering selections.</small>
+    </div>
+    <div class="field field--full formal-study-create__profiles">
+      <label for="formal-solver-profiles">Verified tuning-selection JSON</label>
+      <textarea id="formal-solver-profiles" name="solver_profiles" rows="11" spellcheck="false" autocomplete="off" required placeholder='Paste the JSON produced by: python manage.py solver_tuning_grid SNAPSHOT_ID --mode select'></textarea>
+      <small>Paste either the complete excluded synthetic-pilot selection artifact or its <code>selected_profiles</code> object. Both profile hashes, implementation versions, the shared plan hash, and the 60-second tuning budget are independently checked.</small>
+    </div>
+    <div class="formal-study-create__boundary field--full" role="note">
+      <strong>Before you freeze:</strong>
+      <span>This operation records the fixed 50-student rule and creates 240 measured trials plus eight warm-ups, four feasibility diagnostics, and eight trace diagnostics. It never starts them automatically.</span>
+    </div>
+    <div class="form-actions form-actions--full">
+      <p class="form-status" data-form-status aria-live="polite"></p>
+      <button class="button button--primary" type="submit" data-confirm="Freeze this source snapshot, tuning evidence, four scale instances, and the complete formal run matrix?" {% if not formal_snapshots %}disabled aria-disabled="true"{% endif %}>Create formal study</button>
+    </div>
+  </form>
+</section>
+{% endif %}
+
+<section class="panel" aria-labelledby="formal-history-title">
+  <div class="panel__header">
+    <div><p class="eyebrow">Formal Study</p><h2 id="formal-history-title">Protocol-bound studies</h2></div>
+    <span class="tag">Thesis evidence</span>
+  </div>
+  {% if formal_studies %}
+  <div class="formal-study-list">
+    {% for study in formal_studies %}
+    <article class="formal-study-card">
+      <div class="formal-study-card__heading">
+        <div>
+          <p class="eyebrow">{{ study.protocol_version }} · manifest {{ study.short_hash }}</p>
+          <h3><a href="{% url 'scheduler:formal-study-detail' study.id %}">{{ study.name }}</a></h3>
+          <p>{{ study.source_snapshot|truncatechars:92 }}</p>
+        </div>
+        <span class="status status--{{ study.status_class }}">{{ study.status }}</span>
+      </div>
+      <div class="formal-study-card__progress">
+        <div><span>Run completion</span><strong>{{ study.completed_runs }} / {{ study.total_runs }}</strong></div>
+        <progress value="{{ study.completed_runs }}" max="{{ study.total_runs|default:1 }}" aria-label="{{ study.progress }} percent of study runs complete">{{ study.progress }}%</progress>
+      </div>
+      <dl class="formal-study-card__facts">
+        <div><dt>Measured</dt><dd>{{ study.measured_runs }}</dd></div>
+        <div><dt>Excluded</dt><dd>{{ study.excluded_runs }}</dd></div>
+        <div><dt>Replacements</dt><dd>{{ study.replacement_runs }}</dd></div>
+        <div><dt>Conclusion gate</dt><dd>{% if study.conclusion_available %}Available{% else %}Not available{% endif %}</dd></div>
+      </dl>
+      <div class="formal-study-card__actions">
+        <a class="button button--secondary" href="{% url 'scheduler:formal-study-detail' study.id %}">Open evidence dashboard</a>
+        {% if is_central %}<a class="text-button" href="{% url 'scheduler:formal-study-evidence' study.id %}">Download evidence bundle</a>{% endif %}
+        <time datetime="{{ study.created_at|date:'c' }}">Created {{ study.created_at|date:'M j, Y · H:i'|default:'—' }}</time>
+      </div>
+    </article>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="empty-state empty-state--research">
+    <div>
+      <h3>No formal study has been frozen</h3>
+      <p>Approve the rule manifest, objective normalizers, enrollment, availability, daily-load policies, and both tuned solver profiles before creating formal evidence.</p>
+    </div>
+  </div>
+  {% endif %}
+</section>
+
+<section class="resource-grid resource-grid--two" aria-label="Research guidance">
+  <article class="resource-card">
+    <h2>Create the 30-seed algorithm comparison</h2>
+    <p>Use Exploratory Analysis for configurable dry runs. Those batches are useful for development, but they cannot declare a thesis winner.</p>
+    <a class="table-link" href="{% url 'scheduler:research' %}?workflow=exploratory">Open exploratory workflow</a>
+  </article>
+  <article class="resource-card">
+    <h2>Interpretation boundary</h2>
+    <p>A preferred algorithm is reported only when the complete formal matrix passes the preregistered meaningful-difference and statistical tests.</p>
+    <a class="table-link" href="{% url 'scheduler:help' %}">Read the research guide</a>
+  </article>
+</section>
+
+{% else %}
+<section class="callout callout--warning" role="note">
+  <div>
+    <strong>Exploratory results cannot produce a formal winner.</strong>
+    <p>Use this workflow to check configurations, debug constraints, and rehearse execution. Only the locked Formal Study workflow supports thesis conclusions.</p>
+  </div>
+</section>
 
 {% if is_central %}
 <section class="panel form-panel" id="new-experiment" aria-labelledby="new-experiment-title">
-  <div class="panel__header"><div><p class="eyebrow">Controlled study</p><h2 id="new-experiment-title">Create the 30-seed algorithm comparison</h2><p class="muted">This creates 60 measured runs—one CP-SAT and one Genetic Algorithm run for each seed.</p></div><span class="tag">Advanced</span></div>
-  <form class="form-grid research-form" action="{% url 'api:experiments' %}" method="post" data-api-form data-success-url="{% url 'scheduler:research' %}">
+  <div class="panel__header">
+    <div><p class="eyebrow">Exploratory Analysis</p><h2 id="new-experiment-title">Create the 30-seed algorithm comparison</h2><p class="muted">Creates one CP-SAT and one Genetic Algorithm run per seed using a configurable exploratory budget.</p></div>
+    <span class="tag">Not formal evidence</span>
+  </div>
+  <form class="form-grid research-form" action="{% url 'api:experiments' %}" method="post" data-api-form data-success-url="{% url 'scheduler:research' %}?workflow=exploratory">
     {% csrf_token %}
     <div class="field"><label for="experiment-snapshot">Checked dataset</label><select id="experiment-snapshot" name="snapshot_id" required><option value="">Choose checked data</option>{% for snapshot in snapshots %}<option value="{{ snapshot.id }}">{{ snapshot.term }} · {{ snapshot.short_hash }}</option>{% endfor %}</select></div>
-    <div class="field"><label for="experiment-name">Experiment name</label><input id="experiment-name" name="name" type="text" placeholder="Full-term CP-SAT vs GA"></div>
-    <div class="field"><label for="experiment-time">Time budget per run</label><input id="experiment-time" name="time_limit_seconds" type="number" min="1" value="300" required><small>Seconds for each measured trial.</small></div>
-    <div class="field field--full research-form__seeds"><label for="experiment-seeds">Fixed random seeds</label><textarea id="experiment-seeds" name="seeds" rows="3" required>1001,1002,1003,1004,1005,1006,1007,1008,1009,1010,1011,1012,1013,1014,1015,1016,1017,1018,1019,1020,1021,1022,1023,1024,1025,1026,1027,1028,1029,1030</textarea><small>Thirty repeatable run numbers, shared by both scheduling methods.</small></div>
+    <div class="field"><label for="experiment-name">Experiment name</label><input id="experiment-name" name="name" type="text" placeholder="Exploratory CP-SAT vs GA"></div>
+    <div class="field"><label for="experiment-time">Time budget per run</label><input id="experiment-time" name="time_limit_seconds" type="number" min="1" value="300" required><small>Seconds for each trial.</small></div>
+    <div class="field field--full research-form__seeds"><label for="experiment-seeds">Fixed random seeds</label><textarea id="experiment-seeds" name="seeds" rows="3" required>1001,1002,1003,1004,1005,1006,1007,1008,1009,1010,1011,1012,1013,1014,1015,1016,1017,1018,1019,1020,1021,1022,1023,1024,1025,1026,1027,1028,1029,1030</textarea><small>Repeatable run numbers shared by both scheduling methods.</small></div>
     <input type="hidden" name="order_seed" value="20260824">
     <div class="form-actions form-actions--full"><p class="form-status" data-form-status aria-live="polite"></p><button class="button button--primary" type="submit" {% if not snapshots %}disabled aria-disabled="true"{% endif %}>Create research batch</button></div>
   </form>
@@ -24,14 +178,15 @@
 {% endif %}
 
 <section class="panel" aria-labelledby="experiment-history-title">
-  <div class="panel__header"><div><p class="eyebrow">Research history</p><h2 id="experiment-history-title">Experiment batches</h2></div></div>
+  <div class="panel__header"><div><p class="eyebrow">Exploratory history</p><h2 id="experiment-history-title">Configurable experiment batches</h2></div><span class="tag">No formal conclusion</span></div>
   {% if experiments %}
-  <div class="table-wrap"><table><caption class="visually-hidden">Controlled algorithm experiment batches</caption><thead><tr><th scope="col">Batch</th><th scope="col">Status</th><th scope="col">Seeds / runs</th><th scope="col">Budget</th><th scope="col">Created</th><th scope="col">Actions</th></tr></thead><tbody>{% for batch in experiments %}<tr><td><strong>{{ batch.name }}</strong><small class="cell-note">{{ batch.snapshot|truncatechars:40 }}</small></td><td><span class="status status--{{ batch.status_class }}">{{ batch.status }}</span></td><td>{{ batch.seeds }} seeds · {{ batch.run_count }} runs</td><td>{{ batch.time_limit }} s each</td><td>{{ batch.created_at|date:'M j, Y · H:i'|default:'—' }}</td><td><div class="decision-actions"><a class="text-button" href="{% url 'scheduler:experiment-detail' batch.id %}">Report</a><a class="text-button" href="{% url 'api:experiment-export' batch.id 'csv' %}">CSV</a><a class="text-button" href="{% url 'api:experiment-export' batch.id 'json' %}">JSON</a>{% if batch.can_queue and is_central %}<form action="{% url 'api:experiment-queue' batch.id %}" method="post" data-api-form>{% csrf_token %}<button class="text-button text-button--success" type="submit" data-confirm="Queue all planned CP-SAT and GA trials sequentially?">Queue runs</button></form>{% endif %}</div></td></tr>{% endfor %}</tbody></table></div>
-  {% else %}<div class="empty-state"><div><h3>No research batches yet</h3><p>Create a batch after the dataset and quality policy are final.</p></div></div>{% endif %}
+  <div class="table-wrap"><table><caption>Exploratory CP-SAT and Genetic Algorithm experiment batches</caption><thead><tr><th scope="col">Batch</th><th scope="col">Status</th><th scope="col">Seeds / runs</th><th scope="col">Budget</th><th scope="col">Created</th><th scope="col">Actions</th></tr></thead><tbody>{% for batch in experiments %}<tr><td><strong>{{ batch.name }}</strong><small class="cell-note">{{ batch.snapshot|truncatechars:40 }}</small></td><td><span class="status status--{{ batch.status_class }}">{{ batch.status }}</span></td><td>{{ batch.seeds }} seeds · {{ batch.run_count }} runs</td><td>{{ batch.time_limit }} s each</td><td>{{ batch.created_at|date:'M j, Y · H:i'|default:'—' }}</td><td><div class="decision-actions"><a class="text-button" href="{% url 'scheduler:experiment-detail' batch.id %}">Exploratory report</a><a class="text-button" href="{% url 'api:experiment-export' batch.id 'csv' %}">CSV</a><a class="text-button" href="{% url 'api:experiment-export' batch.id 'json' %}">JSON</a>{% if batch.can_queue and is_central %}<form action="{% url 'api:experiment-queue' batch.id %}" method="post" data-api-form>{% csrf_token %}<button class="text-button text-button--success" type="submit" data-confirm="Queue all planned CP-SAT and GA trials sequentially?">Queue runs</button></form>{% endif %}</div></td></tr>{% endfor %}</tbody></table></div>
+  {% else %}<div class="empty-state"><div><h3>No exploratory batches yet</h3><p>Create one after a checked dataset and approved quality policy are available.</p></div></div>{% endif %}
 </section>
 
-<section class="resource-grid resource-grid--two" aria-label="Research shortcuts">
+<section class="resource-grid resource-grid--two" aria-label="Exploratory shortcuts">
   <article class="resource-card"><h2>Compare recorded runs</h2><p>Inspect feasibility, runtime, and schedule quality side by side using the same checked dataset.</p><a class="table-link" href="{% url 'scheduler:run-comparison' %}">Open run comparison</a></article>
-  <article class="resource-card"><h2>Generate routine schedules</h2><p>Return to the staff workflow to check semester data and generate one candidate timetable.</p><a class="table-link" href="{% url 'scheduler:runs' %}">Open schedule generation</a></article>
+  <article class="resource-card"><h2>Return to formal evidence</h2><p>Review protocol integrity, scaling evidence, uncertainty, and the formal conclusion gate.</p><a class="table-link" href="{% url 'scheduler:research' %}?workflow=formal">Open Formal Study</a></article>
 </section>
+{% endif %}
 {% endblock %}

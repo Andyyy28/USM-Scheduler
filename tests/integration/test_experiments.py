@@ -162,6 +162,10 @@ def test_create_batch_freezes_same_snapshot_matrix_and_deterministic_order() -> 
     )
 
     assert batch.status == models.ExperimentStatus.DRAFT
+    assert batch.study is not None
+    assert batch.study.mode == models.ExperimentMode.EXPLORATORY
+    assert batch.study.scale_percentages == [100]
+    assert batch.study.protocol_integrity["formal_eligible"] is False
     assert batch.runs.count() == 6
     order = experiments.ordered_experiment_runs(batch)
     assert [(run.seed, run.algorithm) for run in order] == [
@@ -677,6 +681,9 @@ def test_summary_statistics_hamming_retry_cap_room_utilization_and_exports() -> 
     assert preference_half["nominal_winner_changed"] is True
     assert sensitivity["nominal_winner_changes"] is True
     decision = summary["primary_engine_decision"]
+    assert summary["formal_conclusion"] == "No formal conclusion available."
+    assert decision["formal_claimable"] is False
+    assert decision["evidence_class"] == "EXPLORATORY"
     assert decision["lexicographic_order"] == [
         "feasibility",
         "feasible_schedule_quality",

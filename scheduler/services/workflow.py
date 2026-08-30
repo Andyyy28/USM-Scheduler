@@ -276,17 +276,51 @@ def cancel_run(run: models.ScheduleRun, actor: models.User) -> models.ScheduleRu
     run = models.ScheduleRun.objects.select_for_update().get(pk=run.pk)
     if run.is_terminal:
         return run
+    revoke_error = ""
     if run.task_id:
-        if run.status == models.RunStatus.RUNNING:
-            # The deployment dedicates a single-concurrency prefork worker to
-            # solver tasks, so terminating this task cannot kill a web process
-            # or another benchmark run. Celery replaces the worker child.
-            current_app.control.revoke(run.task_id, terminate=True, signal="SIGTERM")
-        else:
-            current_app.control.revoke(run.task_id, terminate=False)
+        try:
+            if run.status == models.RunStatus.RUNNING:
+                # The deployment dedicates a single-concurrency prefork worker to
+                # solver tasks, so terminating this task cannot kill a web process
+                # or another benchmark run. Celery replaces the worker child.
+                current_app.control.revoke(run.task_id, terminate=True, signal="SIGTERM")
+            else:
+                current_app.control.revoke(run.task_id, terminate=False)
+        except Exception as exc:  # pragma: no cover - transport-specific
+            # The database cancellation remains authoritative: late workers see
+            # the terminal row and cannot persist solver output over it.
+            revoke_error = type(exc).__name__
     run.status = models.RunStatus.CANCELLED
     run.finished_at = timezone.now()
+    run.heartbeat_at = run.finished_at
+    run.lease_expires_at = None
     run.stopping_reason = "Cancelled by user"
-    run.save(update_fields=["status", "finished_at", "stopping_reason", "updated_at"])
-    audit(actor=actor, action="run.cancelled", entity=run)
+    run.failure_category = models.FailureCategory.USER_CANCELLATION
+    run.failure_classified_by = actor
+    run.failure_classified_at = run.finished_at
+    run.save(
+        update_fields=[
+            "status",
+            "finished_at",
+            "heartbeat_at",
+            "lease_expires_at",
+            "stopping_reason",
+            "failure_category",
+            "failure_classified_by",
+            "failure_classified_at",
+            "updated_at",
+        ]
+    )
+    audit(
+        actor=actor,
+        action="run.cancelled",
+        entity=run,
+        details={"task_revoke_error_type": revoke_error or None},
+    )
+    if run.experiment_batch_id:
+        # A revoked queued task will never enter the Celery task's finalizer,
+        # so refresh its parent lifecycle as part of the same durable change.
+        from scheduler.services.runs import refresh_run_containers
+
+        refresh_run_containers(run.pk)
     return run

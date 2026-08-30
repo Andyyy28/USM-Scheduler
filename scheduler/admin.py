@@ -107,7 +107,15 @@ class TermDatasetRevisionAdmin(admin.ModelAdmin):
 
 @admin.register(models.Section)
 class SectionAdmin(admin.ModelAdmin):
-    list_display = ("code", "program", "year_level", "cohort_status", "revision", "is_active")
+    list_display = (
+        "code",
+        "program",
+        "year_level",
+        "cohort_status",
+        "expected_enrollment",
+        "revision",
+        "is_active",
+    )
     list_filter = ("revision", "program__department__college", "cohort_status", "year_level", "is_active")
     search_fields = ("code", "program__code")
     autocomplete_fields = ("revision", "program")
@@ -230,6 +238,68 @@ class ObjectiveProfileAdmin(admin.ModelAdmin):
     readonly_fields = ("profile_hash", "approved_at", "created_at", "updated_at")
 
 
+@admin.register(models.ConstraintPolicyVersion)
+class ConstraintPolicyVersionAdmin(admin.ModelAdmin):
+    list_display = (
+        "rule_code",
+        "version",
+        "classification",
+        "effective_term",
+        "owner_office",
+        "is_approved",
+        "approved_at",
+    )
+    list_filter = ("classification", "is_approved", "effective_term")
+    search_fields = ("rule_code", "title", "owner_office", "source", "policy_hash")
+    readonly_fields = ("policy_hash", "approved_at", "created_at", "updated_at")
+    autocomplete_fields = ("effective_term", "approved_by")
+
+
+@admin.register(models.ReservedTimeBlock)
+class ReservedTimeBlockAdmin(ReadOnlyArtifactAdmin):
+    list_display = ("label", "scope", "scope_target", "revision", "policy_version", "is_active")
+    list_filter = ("scope", "is_active", "revision")
+    search_fields = ("label", "reason", "policy_version__rule_code")
+    readonly_fields = (
+        "revision",
+        "scope",
+        "college",
+        "department",
+        "program",
+        "section",
+        "policy_version",
+        "label",
+        "reason",
+        "is_active",
+        "created_at",
+        "updated_at",
+    )
+
+
+@admin.register(models.InstructorAvailabilityProfile)
+class InstructorAvailabilityProfileAdmin(admin.ModelAdmin):
+    list_display = (
+        "instructor",
+        "revision",
+        "assume_fully_available",
+        "max_daily_teaching_atoms",
+        "acknowledge_no_daily_limit",
+        "daily_load_policy_version",
+    )
+    list_filter = (
+        "revision",
+        "assume_fully_available",
+        "acknowledge_no_daily_limit",
+    )
+    search_fields = ("instructor__employee_code", "instructor__display_name")
+    autocomplete_fields = (
+        "revision",
+        "instructor",
+        "daily_load_policy_version",
+        "acknowledged_by",
+    )
+
+
 @admin.register(models.ProblemSnapshot)
 class ProblemSnapshotAdmin(ReadOnlyArtifactAdmin):
     list_display = ("snapshot_hash_short", "revision", "objective_profile", "event_count", "created_at")
@@ -243,6 +313,14 @@ class ProblemSnapshotAdmin(ReadOnlyArtifactAdmin):
         "event_count",
         "candidate_count",
         "preprocessing_seconds",
+        "constraint_manifest_hash",
+        "rule_manifest",
+        "fixed_student_limit",
+        "section_headcounts",
+        "meeting_headcounts",
+        "reserved_block_evidence",
+        "instructor_daily_load_evidence",
+        "instance_characteristics",
         "created_by",
         "created_at",
         "updated_at",
@@ -255,9 +333,55 @@ class ProblemSnapshotAdmin(ReadOnlyArtifactAdmin):
         return obj.snapshot_hash[:12]
 
 
+@admin.register(models.ExperimentStudy)
+class ExperimentStudyAdmin(ReadOnlyArtifactAdmin):
+    list_display = (
+        "name",
+        "mode",
+        "protocol_version",
+        "status",
+        "source_snapshot",
+        "created_at",
+    )
+    list_filter = ("mode", "protocol_version", "status")
+    search_fields = ("name", "manifest_hash", "source_snapshot__snapshot_hash")
+    readonly_fields = (
+        "name",
+        "mode",
+        "protocol_version",
+        "status",
+        "source_snapshot",
+        "scale_percentages",
+        "seeds",
+        "order_seed",
+        "deadline_seconds",
+        "cpu_limit",
+        "memory_limit_mb",
+        "warmups_per_algorithm_scale",
+        "protocol_manifest",
+        "manifest_hash",
+        "protocol_integrity",
+        "invalid_reason",
+        "created_by",
+        "cancelled_by",
+        "cancelled_at",
+        "created_at",
+        "updated_at",
+    )
+
+
 @admin.register(models.ExperimentBatch)
 class ExperimentBatchAdmin(ReadOnlyArtifactAdmin):
-    list_display = ("name", "snapshot", "status", "time_limit_seconds", "cpu_limit", "created_at")
+    list_display = (
+        "name",
+        "study",
+        "planned_scale_percentage",
+        "actual_scale_percentage",
+        "status",
+        "time_limit_seconds",
+        "cpu_limit",
+        "created_at",
+    )
     list_filter = ("status",)
     search_fields = ("name", "snapshot__snapshot_hash")
     readonly_fields = ("created_at", "updated_at")
@@ -269,13 +393,15 @@ class ScheduleRunAdmin(ReadOnlyArtifactAdmin):
     list_display = (
         "algorithm",
         "seed",
+        "purpose",
+        "pair_attempt",
         "status",
         "snapshot",
         "execution_seconds",
         "objective_value",
         "created_at",
     )
-    list_filter = ("algorithm", "status", "experiment_batch")
+    list_filter = ("algorithm", "purpose", "status", "failure_category", "experiment_batch")
     search_fields = ("task_id", "snapshot__snapshot_hash", "stopping_reason")
     readonly_fields = ("created_at", "updated_at", "diagnostics", "result_data")
     autocomplete_fields = ("experiment_batch", "snapshot", "requested_by")
@@ -339,7 +465,6 @@ for model in (
     models.StudentSectionMembership,
     models.LaboratoryProfile,
     models.RoomCapability,
-    models.InstructorAvailabilityProfile,
     models.InstructorAvailability,
     models.RoomAvailabilityProfile,
     models.RoomAvailability,
@@ -348,6 +473,7 @@ for model in (
     models.OfferingInstructor,
     models.MeetingRequiredCapability,
     models.ImportError,
+    models.ReservedTimeBlockSlot,
 ):
     admin.site.register(model)
 

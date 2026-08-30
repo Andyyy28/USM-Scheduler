@@ -5,9 +5,10 @@ from __future__ import annotations
 from collections import OrderedDict
 from collections.abc import Callable
 from dataclasses import dataclass
+from itertools import combinations
 from math import prod
 from random import Random
-from time import monotonic
+from time import monotonic, perf_counter
 
 from scheduler.domain.contracts import (
     Assignment,
@@ -19,12 +20,16 @@ from scheduler.domain.contracts import (
     SolverResult,
     SolverStatus,
 )
+from scheduler.domain.prepared import PreparedProblem
 from scheduler.domain.scoring import score_schedule
 from scheduler.domain.validation import validate_schedule
+from scheduler.solvers.neighborhood import improve_feasible
+from scheduler.solvers.neighborhood import repair as bounded_repair
+from scheduler.solvers.tracing import IncumbentTrace
 
 Chromosome = tuple[int, ...]
 Fitness = tuple[int, int]
-GA_IMPLEMENTATION_VERSION = "ga-v2"
+GA_IMPLEMENTATION_VERSION = "ga-v5"
 _CACHE_GENE_BUDGET = 5_000_000
 _MIN_CACHE_ENTRIES = 100
 _MAX_CACHE_ENTRIES = 100_000
@@ -42,6 +47,7 @@ class _Individual:
 class _Evaluation:
     fitness: Fitness
     conflict_event_indexes: tuple[int, ...]
+    conflict_pairs: tuple[tuple[int, int], ...] = ()
 
 
 class GeneticAlgorithmSolver:
@@ -59,6 +65,19 @@ class GeneticAlgorithmSolver:
 
         started_at = monotonic()
         deadline = started_at + config.time_limit_seconds
+        phase_start = perf_counter() if config.diagnostic_trace else 0.0
+        timings = {name: 0.0 for name in (
+            "initialization_seconds", "preparation_seconds", "validation_seconds",
+            "scoring_seconds", "repair_seconds", "feasible_improvement_seconds",
+        )}
+        preparation_expired = False
+        try:
+            prepared = PreparedProblem(problem, deadline=deadline, clock=monotonic)
+        except TimeoutError:
+            prepared = None
+            preparation_expired = True
+        if config.diagnostic_trace:
+            timings["preparation_seconds"] = perf_counter() - phase_start
         rng = Random(config.seed)
         events = tuple(sorted(problem.events, key=lambda event: event.event_id))
         event_indexes = {event.event_id: index for index, event in enumerate(events)}
@@ -80,11 +99,59 @@ class GeneticAlgorithmSolver:
         cache_misses = 0
         cache_evictions = 0
         duplicates_suppressed = 0
+        search_diagnostics = {
+            "mutation_operations": 0,
+            "mutated_offspring": 0,
+            "repair_calls": 0,
+            "repair_needed": 0,
+            "repair_iterations": 0,
+            "repair_candidate_evaluations": 0,
+            "repair_improvements": 0,
+            "repair_successes": 0,
+            "repair_failures": 0,
+            "repair_deadline_skips": 0,
+            "repair_second_move_evaluations": 0,
+            "repair_second_move_improvements": 0,
+            "incumbent_rechecks": 0,
+            "completed_offspring": 0,
+            "completed_generations": 0,
+            "repair_total_evaluation_requests": 0,
+            "repair_single_move_evaluations": 0,
+            "repair_max_evaluation_requests": 0,
+            "repair_budget_exhaustions": 0,
+            "feasible_improvement_calls": 0,
+            "feasible_improvement_evaluations": 0,
+            "feasible_improvement_max_requests": 0,
+            "feasible_improvements": 0,
+        }
         first_feasible_seconds: float | None = None
+        timely_best: _Individual | None = None
+        trace = IncumbentTrace(config.diagnostic_trace)
+        daily_limits = (
+            {
+                evidence.instructor_id: evidence.max_daily_teaching_atoms
+                for evidence in problem.instructor_evidence
+                if evidence.max_daily_teaching_atoms is not None
+            }
+            if problem.supports_thesis_v2_rules
+            else {}
+        )
+
+        def construct() -> Chromosome | None:
+            if preparation_expired:
+                return None
+            return _randomized_greedy(
+                events,
+                locked_genes,
+                rng,
+                daily_limits=daily_limits,
+                preference_weight=problem.objective_profile.preference_weight,
+                deadline=deadline,
+            )
 
         def evaluate(chromosome: Chromosome) -> _Evaluation:
             nonlocal evaluated_count, cache_hits, cache_misses, cache_evictions
-            nonlocal first_feasible_seconds
+            nonlocal first_feasible_seconds, timely_best
             cached = fitness_cache.get(chromosome)
             if cached is not None:
                 cache_hits += 1
@@ -92,8 +159,14 @@ class GeneticAlgorithmSolver:
                 return cached
             cache_misses += 1
             assignments = _to_assignments(events, chromosome)
-            validation = validate_schedule(problem, assignments)
-            objective = score_schedule(problem, assignments)
+            phase_at = perf_counter() if config.diagnostic_trace else 0.0
+            validation = validate_schedule(problem, assignments, prepared=prepared)
+            if config.diagnostic_trace:
+                timings["validation_seconds"] += perf_counter() - phase_at
+                phase_at = perf_counter()
+            objective = score_schedule(problem, assignments, prepared=prepared)
+            if config.diagnostic_trace:
+                timings["scoring_seconds"] += perf_counter() - phase_at
             involved = {
                 event_indexes[event_id]
                 for violation in validation.violations
@@ -103,24 +176,49 @@ class GeneticAlgorithmSolver:
             result = _Evaluation(
                 fitness=(validation.hard_violation_count, objective.weighted_total),
                 conflict_event_indexes=tuple(sorted(involved)),
+                conflict_pairs=tuple(sorted({
+                    tuple(sorted((event_indexes[left], event_indexes[right])))
+                    for violation in validation.violations
+                    for left, right in combinations(violation.event_ids, 2)
+                    if left in event_indexes and right in event_indexes
+                })),
             )
             fitness_cache[chromosome] = result
             if len(fitness_cache) > cache_capacity:
                 fitness_cache.popitem(last=False)
                 cache_evictions += 1
             evaluated_count += 1
-            if result.fitness[0] == 0 and first_feasible_seconds is None:
-                first_feasible_seconds = monotonic() - started_at
+            completed_at = monotonic()
+            if completed_at <= deadline and (timely_best is None or result.fitness < timely_best.fitness):
+                # The prepared path is an optimization, never the authority for
+                # a returned incumbent. Recheck without indexes within budget.
+                search_diagnostics["incumbent_rechecks"] += 1
+                phase_at = perf_counter() if config.diagnostic_trace else 0.0
+                checked_validation = validate_schedule(problem, assignments)
+                if config.diagnostic_trace:
+                    timings["validation_seconds"] += perf_counter() - phase_at
+                    phase_at = perf_counter()
+                checked_objective = score_schedule(problem, assignments)
+                if config.diagnostic_trace:
+                    timings["scoring_seconds"] += perf_counter() - phase_at
+                if checked_validation != validation or checked_objective != objective:
+                    raise ValueError("prepared evaluation disagrees with independent incumbent check")
+                completed_at = monotonic()
+                if completed_at <= deadline:
+                    timely_best = _Individual(chromosome, result.fitness)
+                    if result.fitness[0] == 0 and first_feasible_seconds is None:
+                        first_feasible_seconds = completed_at - started_at
+                    trace.observe(completed_at - started_at, result.fitness)
             return result
 
-        # Exactly one incumbent is always constructed. After that first evaluation,
-        # every expensive boundary observes the caller's wall-clock deadline.
-        first_chromosome = _randomized_greedy(events, locked_genes, rng)
-        first_evaluation = evaluate(first_chromosome)
-        population = [
-            _Individual(chromosome=first_chromosome, fitness=first_evaluation.fitness)
-        ]
-        population_chromosomes = {first_chromosome}
+        # Initialization is part of the budget. A completed evaluation can only
+        # become the returned incumbent if it finishes within that same budget.
+        first_chromosome = construct()
+        population = []
+        if first_chromosome is not None and monotonic() < deadline:
+            first_evaluation = evaluate(first_chromosome)
+            population.append(_Individual(first_chromosome, first_evaluation.fitness))
+        population_chromosomes = {individual.chromosome for individual in population}
         initial_attempts = 1
         initial_attempt_limit = max(
             config.population_size,
@@ -135,8 +233,10 @@ class GeneticAlgorithmSolver:
             and not search_space_exhausted
             and monotonic() < deadline
         ):
-            chromosome = _randomized_greedy(events, locked_genes, rng)
+            chromosome = construct()
             initial_attempts += 1
+            if chromosome is None:
+                break
             if chromosome in population_chromosomes:
                 duplicates_suppressed += 1
                 continue
@@ -150,7 +250,8 @@ class GeneticAlgorithmSolver:
             )
         population.sort(key=lambda individual: individual.fitness)
         initial_population_size = len(population)
-        best = population[0]
+        if config.diagnostic_trace:
+            timings["initialization_seconds"] = perf_counter() - phase_start
         generation = 0
         generations_without_new_evaluation = 0
         maximum_stagnation = 0
@@ -158,6 +259,7 @@ class GeneticAlgorithmSolver:
 
         while (
             monotonic() < deadline
+            and population
             and not search_space_exhausted
             and generations_without_new_evaluation < _STAGNANT_GENERATION_LIMIT
             and (config.max_generations is None or generation < config.max_generations)
@@ -186,6 +288,7 @@ class GeneticAlgorithmSolver:
                     )
                 else:
                     chromosome = left.chromosome
+                before_mutation = chromosome
                 chromosome = _mutate(
                     chromosome,
                     events,
@@ -193,8 +296,16 @@ class GeneticAlgorithmSolver:
                     mutation_rate,
                     rng,
                 )
+                changed_genes = sum(
+                    before != after
+                    for index, (before, after) in enumerate(zip(before_mutation, chromosome, strict=True))
+                    if index not in locked_genes
+                )
+                search_diagnostics["mutation_operations"] += changed_genes
+                search_diagnostics["mutated_offspring"] += int(changed_genes > 0)
                 if monotonic() >= deadline:
                     break
+                phase_at = perf_counter() if config.diagnostic_trace else 0.0
                 chromosome = _repair(
                     events,
                     chromosome,
@@ -203,20 +314,43 @@ class GeneticAlgorithmSolver:
                     evaluate,
                     rng,
                     deadline,
+                    search_diagnostics,
                 )
+                if config.diagnostic_trace:
+                    timings["repair_seconds"] += perf_counter() - phase_at
                 if monotonic() >= deadline:
                     break
                 if chromosome in next_chromosomes:
                     duplicates_suppressed += 1
                     continue
                 evaluation = evaluate(chromosome)
+                if monotonic() >= deadline:
+                    break
                 next_population.append(_Individual(chromosome, evaluation.fitness))
+                search_diagnostics["completed_offspring"] += 1
                 next_chromosomes.add(chromosome)
                 search_space_exhausted = (
                     small_search_space and evaluated_count >= search_space_size
                 )
                 if search_space_exhausted:
                     break
+            generation_completed = len(next_population) >= target_size and monotonic() < deadline
+            if generation_completed:
+                search_diagnostics["completed_generations"] += 1
+                if timely_best is not None and timely_best.fitness[0] == 0:
+                    phase_at = perf_counter() if config.diagnostic_trace else 0.0
+                    improve_feasible(
+                        events, timely_best.chromosome, timely_best.fitness,
+                        locked_genes, evaluate, rng, deadline, search_diagnostics, monotonic,
+                    )
+                    if config.diagnostic_trace:
+                        timings["feasible_improvement_seconds"] += perf_counter() - phase_at
+                    # evaluate() already independently certifies the new global
+                    # incumbent. Let the next generation inherit it as an elite.
+                    if timely_best.chromosome not in next_chromosomes:
+                        worst = max(range(len(next_population)), key=lambda index: next_population[index].fitness)
+                        next_population[worst] = timely_best
+                    search_space_exhausted = small_search_space and evaluated_count >= search_space_size
             if len(next_population) < target_size:
                 # A saturated generation may have fewer unique chromosomes than the
                 # requested population. Reusing incumbents keeps selection well-defined
@@ -226,8 +360,6 @@ class GeneticAlgorithmSolver:
                     next_population.append(source[len(next_population) % len(source)])
             population = sorted(next_population, key=lambda individual: individual.fitness)
             generation += 1
-            if population[0].fitness < best.fitness:
-                best = population[0]
             if evaluated_count == evaluations_before_generation:
                 generations_without_new_evaluation += 1
             else:
@@ -237,9 +369,9 @@ class GeneticAlgorithmSolver:
             )
 
         runtime = monotonic() - started_at
-        assignments = _to_assignments(events, best.chromosome)
+        assignments = _to_assignments(events, timely_best.chromosome) if timely_best else ()
         validation = validate_schedule(problem, assignments)
-        objective = score_schedule(problem, assignments)
+        objective = score_schedule(problem, assignments) if timely_best else None
         if validation.feasible:
             status = SolverStatus.FEASIBLE
             if search_space_exhausted:
@@ -285,8 +417,8 @@ class GeneticAlgorithmSolver:
             metrics=(
                 ("implementation_version", GA_IMPLEMENTATION_VERSION),
                 ("evaluated_chromosomes", evaluated_count),
-                ("final_hard_violations", best.fitness[0]),
-                ("final_soft_penalty", best.fitness[1]),
+                ("final_hard_violations", validation.hard_violation_count),
+                ("final_soft_penalty", objective.weighted_total if objective else None),
                 ("generations", generation),
                 ("initial_population_size", initial_population_size),
                 ("mutable_event_count", mutable_event_count),
@@ -301,7 +433,8 @@ class GeneticAlgorithmSolver:
                 ("search_space_size", search_space_size),
                 ("search_space_exhausted", search_space_exhausted),
                 ("worker_count", 1),
-            ),
+            ) + tuple(search_diagnostics.items()) + trace.metrics()
+            + (tuple(timings.items()) if config.diagnostic_trace else ()),
         )
 
 
@@ -327,7 +460,13 @@ def _randomized_greedy(
     events: tuple[MeetingEvent, ...],
     locked_genes: dict[int, int],
     rng: Random,
-) -> Chromosome:
+    *,
+    daily_limits: dict[str, int] | None = None,
+    preference_weight: int = 1,
+    deadline: float = float("inf"),
+) -> Chromosome | None:
+    if monotonic() >= deadline:
+        return None
     chromosome = [-1] * len(events)
     order = [index for index in range(len(events)) if index not in locked_genes]
     rng.shuffle(order)
@@ -336,11 +475,15 @@ def _randomized_greedy(
     instructor_occupancy: dict[tuple[str, str], set[str]] = {}
     section_occupancy: dict[tuple[str, str], set[str]] = {}
     distinct_days: dict[tuple[str, str], set[str]] = {}
+    daily_loads: dict[tuple[str, str], int] = {}
+    daily_limits = daily_limits or {}
 
     # Locks are immutable parts of the partial schedule. Seed them first so
     # every mutable event is ranked against their occupancy regardless of the
     # randomized construction order.
     for event_index, selected_index in sorted(locked_genes.items()):
+        if monotonic() >= deadline:
+            return None
         event = events[event_index]
         chromosome[event_index] = selected_index
         _occupy(
@@ -350,31 +493,62 @@ def _randomized_greedy(
             instructor_occupancy,
             section_occupancy,
             distinct_days,
+            daily_loads,
         )
 
     for event_index in order:
+        if monotonic() >= deadline:
+            return None
         event = events[event_index]
         candidate_indexes = list(range(len(event.candidates)))
         rng.shuffle(candidate_indexes)
-        ranked = [
-            (
-                (
-                    _incremental_conflict_count(
-                        event,
-                        event.candidates[candidate_index],
-                        room_occupancy,
-                        instructor_occupancy,
-                        section_occupancy,
-                        distinct_days,
-                    ),
-                    event.candidates[candidate_index].preference_penalty,
-                ),
-                candidate_index,
+        # Room alternatives at the same time share all non-room conflicts.
+        # Keep this cache local to the current partial schedule: occupancy changes
+        # after each event, so reusing it across placements would be incorrect.
+        time_costs: dict[tuple[str, tuple[str, ...]], tuple[int, int]] = {}
+        best_fitness: tuple[int, int, int] | None = None
+        best_candidates: list[int] = []
+        for position, candidate_index in enumerate(candidate_indexes):
+            if position % 64 == 0 and monotonic() >= deadline:
+                return None
+            candidate = event.candidates[candidate_index]
+            time_key = (candidate.day_id, candidate.occupied_atom_ids)
+            time_cost = time_costs.get(time_key)
+            if time_cost is None:
+                conflicts = _incremental_conflict_count(
+                    event, candidate, {}, instructor_occupancy, section_occupancy, distinct_days
+                )
+                added_excess = 0
+                for instructor_id in event.instructor_ids:
+                    limit = daily_limits.get(instructor_id)
+                    if limit is None:
+                        continue
+                    before = daily_loads.get((instructor_id, candidate.day_id), 0)
+                    after = before + len(candidate.occupied_atom_ids)
+                    # The validator counts one violation per instructor/day,
+                    # even if several meetings exceed that day's limit.
+                    conflicts += int(before <= limit < after)
+                    added_excess += max(0, after - limit) - max(0, before - limit)
+                time_cost = (conflicts, added_excess)
+                time_costs[time_key] = time_cost
+            room_conflicts: set[str] = set()
+            for atom_id in candidate.occupied_atom_ids:
+                room_conflicts.update(room_occupancy.get((candidate.room_id, atom_id), ()))
+            fitness = (
+                time_cost[0] + len(room_conflicts),
+                time_cost[1],
+                candidate.preference_penalty * preference_weight,
             )
-            for candidate_index in candidate_indexes
-        ]
-        best_fitness = min(item[0] for item in ranked)
-        best_candidates = [index for fitness, index in ranked if fitness == best_fitness]
+            if best_fitness is None or fitness < best_fitness:
+                best_fitness = fitness
+                best_candidates = [candidate_index]
+            elif fitness == best_fitness:
+                best_candidates.append(candidate_index)
+            # Every term is nonnegative. The first zero in a uniformly shuffled
+            # candidate list is uniform over all zero-cost placements, including
+            # time groups with different numbers of rooms.
+            if fitness == (0, 0, 0):
+                break
         selected_index = rng.choice(best_candidates)
         chromosome[event_index] = selected_index
         _occupy(
@@ -384,7 +558,10 @@ def _randomized_greedy(
             instructor_occupancy,
             section_occupancy,
             distinct_days,
+            daily_loads,
         )
+    if monotonic() >= deadline:
+        return None
     return tuple(chromosome)
 
 
@@ -421,6 +598,7 @@ def _occupy(
     instructor_occupancy: dict[tuple[str, str], set[str]],
     section_occupancy: dict[tuple[str, str], set[str]],
     distinct_days: dict[tuple[str, str], set[str]],
+    daily_loads: dict[tuple[str, str], int] | None = None,
 ) -> None:
     for atom_id in candidate.occupied_atom_ids:
         room_occupancy.setdefault((candidate.room_id, atom_id), set()).add(event.event_id)
@@ -432,6 +610,10 @@ def _occupy(
         distinct_days.setdefault((event.distinct_day_group, candidate.day_id), set()).add(
             event.event_id
         )
+    if daily_loads is not None:
+        for instructor_id in event.instructor_ids:
+            key = (instructor_id, candidate.day_id)
+            daily_loads[key] = daily_loads.get(key, 0) + len(candidate.occupied_atom_ids)
 
 
 def _tournament(population: list[_Individual], size: int, rng: Random) -> _Individual:
@@ -473,62 +655,20 @@ def _mutate(
         if index in locked_genes:
             mutated[index] = locked_genes[index]
         elif rng.random() < mutation_rate and len(event.candidates) > 1:
-            alternatives = [gene for gene in range(len(event.candidates)) if gene != mutated[index]]
-            mutated[index] = rng.choice(alternatives)
+            # Uniform over every allele except the current one, without allocating
+            # a domain-sized list for each mutated gene.
+            alternative = rng.randrange(len(event.candidates) - 1)
+            mutated[index] = alternative + int(alternative >= mutated[index])
     return tuple(mutated)
 
 
 def _repair(
-    events: tuple[MeetingEvent, ...],
-    chromosome: Chromosome,
-    locked_genes: dict[int, int],
-    attempts: int,
-    evaluate: Callable[[Chromosome], _Evaluation],
-    rng: Random,
-    deadline: float,
+    events: tuple[MeetingEvent, ...], chromosome: Chromosome, locked_genes: dict[int, int],
+    attempts: int, evaluate: Callable[[Chromosome], _Evaluation], rng: Random,
+    deadline: float, diagnostics: dict[str, int] | None = None,
 ) -> Chromosome:
-    current = chromosome
-    if monotonic() >= deadline:
-        return current
-    current_evaluation = evaluate(current)
-    current_fitness = current_evaluation.fitness
-    for _ in range(attempts):
-        if current_fitness[0] == 0 or monotonic() >= deadline:
-            break
-        involved = set(current_evaluation.conflict_event_indexes)
-        if not involved:
-            break
-        ordered = sorted(involved, key=lambda index: (len(events[index].candidates), index))
-        improved = False
-        for index in ordered:
-            candidate_indexes = list(range(len(events[index].candidates)))
-            rng.shuffle(candidate_indexes)
-            best_chromosome = current
-            best_fitness = current_fitness
-            best_evaluation = current_evaluation
-            for candidate_index in candidate_indexes:
-                if monotonic() >= deadline:
-                    return current
-                if candidate_index == current[index]:
-                    continue
-                trial = list(current)
-                trial[index] = candidate_index
-                trial_chromosome = tuple(trial)
-                trial_evaluation = evaluate(trial_chromosome)
-                trial_fitness = trial_evaluation.fitness
-                if trial_fitness < best_fitness:
-                    best_chromosome = trial_chromosome
-                    best_fitness = trial_fitness
-                    best_evaluation = trial_evaluation
-            if best_fitness < current_fitness:
-                current = best_chromosome
-                current_fitness = best_fitness
-                current_evaluation = best_evaluation
-                improved = True
-                break
-        if not improved:
-            break
-    return current
+    return bounded_repair(events, chromosome, locked_genes, attempts, evaluate, rng,
+                          deadline, diagnostics if diagnostics is not None else {}, monotonic)
 
 
 def _cache_capacity(gene_count: int) -> int:

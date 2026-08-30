@@ -15,10 +15,12 @@ from .contracts import (
     Violation,
     ViolationCode,
 )
+from .prepared import PreparedProblem
 
 
 def validate_schedule(
-    problem: ProblemInstance, assignments: tuple[Assignment, ...] | list[Assignment]
+    problem: ProblemInstance, assignments: tuple[Assignment, ...] | list[Assignment],
+    *, prepared: PreparedProblem | None = None,
 ) -> ValidationReport:
     """Validate a schedule without trusting either optimization engine.
 
@@ -27,7 +29,9 @@ def validate_schedule(
     when the atom size is thirty minutes.
     """
 
-    event_map = problem.event_map
+    if prepared is not None:
+        prepared.require_problem(problem)
+    event_map = prepared.event_map if prepared is not None else problem.event_map
     by_event: dict[str, list[Assignment]] = defaultdict(list)
     violations: list[Violation] = []
 
@@ -44,7 +48,7 @@ def validate_schedule(
         by_event[assignment.event_id].append(assignment)
 
     resolved: dict[str, CandidatePlacement] = {}
-    for event in sorted(problem.events, key=lambda item: item.event_id):
+    for event in prepared.events if prepared is not None else sorted(problem.events, key=lambda item: item.event_id):
         event_assignments = by_event.get(event.event_id, [])
         if not event_assignments:
             violations.append(
@@ -65,7 +69,8 @@ def validate_schedule(
             )
             continue
         assignment = event_assignments[0]
-        candidate = event.candidate_map.get(assignment.candidate_id)
+        candidates = prepared.candidates[event.event_id] if prepared is not None else event.candidate_map
+        candidate = candidates.get(assignment.candidate_id)
         if candidate is None:
             violations.append(
                 Violation(
@@ -98,6 +103,8 @@ def validate_schedule(
         _append_local_hard_rule_violations(problem, resolved, violations)
     _append_resource_conflicts(problem, resolved, violations)
     _append_distinct_day_conflicts(problem, resolved, violations)
+    if problem.supports_thesis_v2_rules:
+        _append_daily_load_violations(problem, resolved, violations)
 
     ordered = tuple(sorted(violations, key=_violation_sort_key))
     return ValidationReport(feasible=not ordered, violations=ordered)
@@ -113,10 +120,53 @@ def _append_local_hard_rule_violations(
     room_evidence = problem.room_evidence_map
     instructor_evidence = problem.instructor_evidence_map
     for event in sorted(problem.events, key=lambda item: item.event_id):
+        if problem.supports_thesis_v2_rules:
+            expected_sections = set(event.section_ids)
+            evidenced_sections = {section_id for section_id, _ in event.section_headcounts}
+            if (
+                event.fixed_student_limit != 50
+                or event.meeting_headcount is None
+                or expected_sections != evidenced_sections
+            ):
+                violations.append(
+                    Violation(
+                        code=ViolationCode.MISSING_ENROLLMENT_EVIDENCE,
+                        message=(
+                            f"Event {event.event_id!r} lacks complete frozen section-enrollment "
+                            "evidence for the fixed 50-student rule."
+                        ),
+                        event_ids=(event.event_id,),
+                    )
+                )
+            elif event.meeting_headcount > 50:
+                violations.append(
+                    Violation(
+                        code=ViolationCode.FIXED_STUDENT_LIMIT_EXCEEDED,
+                        message=(
+                            f"Event {event.event_id!r} combines {event.meeting_headcount} "
+                            "students; the fixed maximum is 50."
+                        ),
+                        event_ids=(event.event_id,),
+                    )
+                )
         candidate = resolved.get(event.event_id)
         if candidate is None:
             continue
         occupied = set(candidate.occupied_atom_ids)
+        if problem.supports_thesis_v2_rules:
+            reserved_atoms = occupied & set(event.reserved_atom_ids)
+            if reserved_atoms:
+                violations.append(
+                    Violation(
+                        code=ViolationCode.RESERVED_BLOCK_VIOLATION,
+                        message=(
+                            f"Event {event.event_id!r} uses an approved recurring reserved "
+                            "teaching block."
+                        ),
+                        event_ids=(event.event_id,),
+                        atom_ids=tuple(sorted(reserved_atoms)),
+                    )
+                )
         requirement_sections = {
             requirement.section_id for requirement in event.authorization_requirements
         }
@@ -335,6 +385,71 @@ def _append_distinct_day_conflicts(
                     ),
                     event_ids=(left, right),
                     resource_id=group_id,
+                )
+            )
+
+
+def _append_daily_load_violations(
+    problem: ProblemInstance,
+    resolved: dict[str, CandidatePlacement],
+    violations: list[Violation],
+) -> None:
+    """Enforce each instructor's frozen positive daily atom limit."""
+
+    instructor_evidence = problem.instructor_evidence_map
+    loads: dict[tuple[str, str], int] = defaultdict(int)
+    events_by_day: dict[tuple[str, str], set[str]] = defaultdict(set)
+    atoms_by_day: dict[tuple[str, str], set[str]] = defaultdict(set)
+    used_instructors: set[str] = set()
+
+    for event in problem.events:
+        candidate = resolved.get(event.event_id)
+        if candidate is None:
+            continue
+        for instructor_id in event.instructor_ids:
+            used_instructors.add(instructor_id)
+            key = (instructor_id, candidate.day_id)
+            loads[key] += len(candidate.occupied_atom_ids)
+            events_by_day[key].add(event.event_id)
+            atoms_by_day[key].update(candidate.occupied_atom_ids)
+
+    for instructor_id in sorted(used_instructors):
+        evidence = instructor_evidence.get(instructor_id)
+        if evidence is None:
+            # The schema-1.1 availability check already reports this omission.
+            continue
+        if (
+            evidence.max_daily_teaching_atoms is None
+            and not evidence.acknowledge_no_daily_limit
+        ):
+            violations.append(
+                Violation(
+                    code=ViolationCode.MISSING_DAILY_LOAD_EVIDENCE,
+                    message=(
+                        f"Instructor {instructor_id!r} has neither a positive approved "
+                        "daily teaching-atom limit nor an approved no-limit acknowledgement."
+                    ),
+                    resource_id=instructor_id,
+                )
+            )
+            continue
+        if evidence.max_daily_teaching_atoms is None:
+            continue
+        for (resource_id, day_id), atom_count in sorted(loads.items()):
+            if resource_id != instructor_id or atom_count <= evidence.max_daily_teaching_atoms:
+                continue
+            key = (resource_id, day_id)
+            violations.append(
+                Violation(
+                    code=ViolationCode.INSTRUCTOR_DAILY_LOAD_EXCEEDED,
+                    message=(
+                        f"Instructor {resource_id!r} is assigned {atom_count} teaching "
+                        f"atoms on day {day_id!r}; the approved maximum is "
+                        f"{evidence.max_daily_teaching_atoms}."
+                    ),
+                    event_ids=tuple(sorted(events_by_day[key])),
+                    resource_id=resource_id,
+                    atom_ids=tuple(sorted(atoms_by_day[key])),
                 )
             )
 

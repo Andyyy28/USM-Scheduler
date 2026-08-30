@@ -263,7 +263,7 @@ def test_authenticated_operator_pages_render_current_contracts() -> None:
     research_html = client.get(reverse("scheduler:research")).content.decode()
     assert "Create the 30-seed algorithm comparison" in research_html
     help_html = client.get(reverse("scheduler:help")).content.decode()
-    assert reverse("api:trial-workbook") in help_html
+    assert f"{reverse('scheduler:imports')}#practice-workbook" in help_html
     assert "How can we help?" in help_html
 
 
