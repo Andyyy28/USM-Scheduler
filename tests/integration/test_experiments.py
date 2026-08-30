@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import io
 import json
 from datetime import date, time
@@ -20,19 +21,20 @@ pytestmark = pytest.mark.django_db
 def _experiment_graph(
     suffix: str = "", *, objective_approved: bool = True
 ) -> dict[str, object]:
+    code_suffix = hashlib.sha256(suffix.encode("utf-8")).hexdigest()[:12] if suffix else ""
     user = models.User.objects.create_user(
         username=f"experimenter{suffix}",
         password="test-password",
         role=models.UserRole.CENTRAL_SCHEDULER,
     )
-    college = models.College.objects.create(code=f"EC{suffix}", name=f"College {suffix}")
+    college = models.College.objects.create(code=f"EC{code_suffix}", name=f"College {suffix}")
     department = models.Department.objects.create(
-        college=college, code=f"ED{suffix}", name=f"Department {suffix}"
+        college=college, code=f"ED{code_suffix}", name=f"Department {suffix}"
     )
     program = models.Program.objects.create(
-        department=department, code=f"EP{suffix}", name=f"Program {suffix}"
+        department=department, code=f"EP{code_suffix}", name=f"Program {suffix}"
     )
-    subject = models.Subject.objects.create(code=f"ES{suffix}", title="Experiments")
+    subject = models.Subject.objects.create(code=f"ES{code_suffix}", title="Experiments")
     program_subject = models.ProgramSubject.objects.create(
         program=program,
         subject=subject,
@@ -54,17 +56,17 @@ def _experiment_graph(
     section = models.Section.objects.create(
         revision=revision,
         program=program,
-        code=f"BSCS-1A-{suffix}",
+        code=f"BSCS-1A-{code_suffix}",
         year_level=1,
         cohort_status=models.CohortStatus.INCOMING,
     )
     instructor = models.Instructor.objects.create(
         department=department,
-        employee_code=f"EF-{suffix}",
+        employee_code=f"EF-{code_suffix}",
         display_name="Experiment Faculty",
     )
     room = models.Room.objects.create(
-        code=f"ER-{suffix}", campus=term.campus, owning_college=college
+        code=f"ER-{code_suffix}", campus=term.campus, owning_college=college
     )
     slots = (
         models.TimeSlot.objects.create(
@@ -86,7 +88,7 @@ def _experiment_graph(
         revision=revision,
         subject=subject,
         offering_department=department,
-        external_key=f"EO-{suffix}",
+        external_key=f"EO-{code_suffix}",
     )
     models.OfferingSection.objects.create(
         offering=offering, section=section, program_subject=program_subject
