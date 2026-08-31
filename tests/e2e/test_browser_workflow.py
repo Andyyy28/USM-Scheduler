@@ -9,8 +9,13 @@ from playwright.sync_api import expect, sync_playwright
 from scheduler import models
 from scheduler import views as scheduler_views
 from scheduler.services import experiments as experiment_services
+from tests.browser_helpers import assert_browser_assets
 
-pytestmark = [pytest.mark.django_db(transaction=True), pytest.mark.e2e]
+pytestmark = [
+    pytest.mark.django_db(transaction=True),
+    pytest.mark.e2e,
+    pytest.mark.usefixtures("browser_static_storage"),
+]
 
 
 def _browser_benchmark_summary() -> dict[str, object]:
@@ -137,7 +142,9 @@ def test_central_scheduler_can_sign_in_and_open_semester_import(live_server) -> 
         # and avoids a second, redundant headless-shell download.
         browser = playwright.chromium.launch(headless=True, channel="chromium")
         page = browser.new_page()
-        page.goto(live_server.url, wait_until="networkidle")
+        response = page.goto(live_server.url, wait_until="networkidle")
+        assert response is not None and response.ok
+        assert_browser_assets(page)
 
         expect(page.get_by_role("heading", name="Sign in to your workspace")).to_be_visible()
         page.get_by_label("Username").fill("browser-central")
@@ -147,7 +154,7 @@ def test_central_scheduler_can_sign_in_and_open_semester_import(live_server) -> 
         expect(page.get_by_role("heading", name="Good day, browser-central.")).to_be_visible()
         page.get_by_role("link", name="Prepare Data").first.click()
         expect(page.get_by_role("heading", name="Prepare semester information")).to_be_visible()
-        expect(page.get_by_role("link", name="Download practice workbook")).to_be_visible()
+        expect(page.get_by_role("button", name="Download practice workbook")).to_be_visible()
         expect(page.locator("[data-file-drop]")).to_be_visible()
         expect(page.locator('input[type="file"]')).to_be_attached()
         browser.close()
@@ -176,6 +183,7 @@ def test_navigation_drawer_breakpoints_focus_and_mobile_widths(live_server) -> N
         page.get_by_label("Password").fill("browser-test-password")
         page.get_by_role("button", name="Sign in").click()
         expect(page.get_by_role("heading", name="Good day, browser-drawer.")).to_be_visible()
+        assert_browser_assets(page)
 
         menu = page.get_by_role("button", name="Open navigation")
         close = page.get_by_role("button", name="Close navigation")
@@ -292,6 +300,7 @@ def test_help_page_is_readable_at_desktop_laptop_and_mobile_widths(live_server) 
         page.get_by_label("Password").fill("browser-test-password")
         page.get_by_role("button", name="Sign in").click()
         page.goto(f"{live_server.url}/help/", wait_until="networkidle")
+        assert_browser_assets(page)
 
         expect(page.get_by_role("heading", name="How can we help?")).to_be_visible()
         expect(page.get_by_role("navigation", name="Help topics")).to_be_visible()
@@ -348,6 +357,7 @@ def test_benchmark_graph_reflows_and_keeps_exact_evidence(
         page.get_by_label("Password").fill("browser-test-password")
         page.get_by_role("button", name="Sign in").click()
         page.goto(f"{live_server.url}/experiments/991/", wait_until="networkidle")
+        assert_browser_assets(page)
 
         expect(page.get_by_role("heading", name="CP-SAT and Genetic Algorithm")).to_be_visible()
         expect(page.locator("[data-benchmark-chart]")).to_have_count(3)

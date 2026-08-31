@@ -29,6 +29,7 @@ from scheduler.api.serializers import (
     TermDatasetRevisionSerializer,
 )
 from scheduler.services.problem_builder import ProblemBuildError, build_and_store_snapshot
+from scheduler.services.revision_metadata import with_dataset_counts
 from scheduler.services.runs import create_run, queue_run
 from scheduler.services.statistics import describe, vargha_delaney_a12, wilson_interval
 from scheduler.services.workflow import (
@@ -69,6 +70,17 @@ def _formal_study_error_response(exc: Exception) -> Response:
     )
 
 
+def _problem_build_error_response(exc: ProblemBuildError) -> Response:
+    return Response(
+        {
+            "code": "PREFLIGHT_FAILED",
+            "detail": str(exc),
+            "issues": [issue.to_dict() for issue in exc.issues],
+        },
+        status=status.HTTP_400_BAD_REQUEST,
+    )
+
+
 class HealthView(APIView):
     authentication_classes = []
     permission_classes = []
@@ -98,7 +110,10 @@ class RevisionListView(APIView):
 
     def get(self, request, term_id: int):
         term = get_object_or_404(models.AcademicTerm, pk=term_id)
-        return Response(TermDatasetRevisionSerializer(term.dataset_revisions.all(), many=True).data)
+        revisions = with_dataset_counts(
+            term.dataset_revisions.select_related("source_import_batch")
+        )
+        return Response(TermDatasetRevisionSerializer(revisions, many=True).data)
 
 
 class TermCloneView(APIView):
@@ -143,10 +158,7 @@ class RevisionFinalizeView(APIView):
         try:
             revision = validate_and_commit_revision(revision, objective, request.user)
         except ProblemBuildError as exc:
-            return Response(
-                {"code": "PREFLIGHT_FAILED", "issues": [issue.to_dict() for issue in exc.issues]},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return _problem_build_error_response(exc)
         except Exception as exc:
             _translate_domain_error(exc)
         return Response(TermDatasetRevisionSerializer(revision).data)
@@ -236,7 +248,20 @@ class ImportPreviewView(APIView):
         if upload.size > 20 * 1024 * 1024:
             raise ValidationError({"file": "The workbook exceeds the 20 MB limit."})
         term = get_object_or_404(models.AcademicTerm, pk=request.data.get("term_id"))
-        batch = preview_workbook(upload.read(), term=term, user=request.user)
+        data_origin = request.data.get("data_origin")
+        if data_origin not in {
+            models.DatasetOrigin.SYNTHETIC,
+            models.DatasetOrigin.INSTITUTIONAL,
+        }:
+            raise ValidationError(
+                {"data_origin": "Declare whether this dataset is synthetic or institutional."}
+            )
+        batch = preview_workbook(
+            upload.read(),
+            term=term,
+            user=request.user,
+            data_origin=data_origin,
+        )
         if batch.original_filename != upload.name:
             batch.original_filename = upload.name[:255]
             batch.save(update_fields=["original_filename", "updated_at"])
@@ -274,10 +299,7 @@ class SnapshotListCreateView(APIView):
         try:
             snapshot, _ = build_and_store_snapshot(revision, objective, request.user)
         except ProblemBuildError as exc:
-            return Response(
-                {"code": "PREFLIGHT_FAILED", "issues": [issue.to_dict() for issue in exc.issues]},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return _problem_build_error_response(exc)
         return Response(ProblemSnapshotSerializer(snapshot).data, status=status.HTTP_201_CREATED)
 
 
@@ -614,10 +636,7 @@ class ScheduleRegenerateView(APIView):
                 request.user,
             )
         except ProblemBuildError as exc:
-            return Response(
-                {"code": "PREFLIGHT_FAILED", "issues": [issue.to_dict() for issue in exc.issues]},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return _problem_build_error_response(exc)
         raw_algorithms = request.data.get("algorithms") or request.data.get("algorithm") or "CP_SAT"
         if hasattr(request.data, "getlist") and request.data.getlist("algorithms"):
             raw_algorithms = request.data.getlist("algorithms")

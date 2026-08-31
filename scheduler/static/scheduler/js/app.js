@@ -292,16 +292,81 @@
     button.addEventListener("click", () => window.print());
   });
 
-  const apiError = (payload, fallback) => {
-    if (!payload) return fallback;
-    if (typeof payload === "string") return payload;
-    if (payload.detail) return payload.detail;
-    const messages = Object.entries(payload).map(([field, value]) => {
-      const message = Array.isArray(value) ? value.join(" ") : String(value);
-      return `${field.replaceAll("_", " ")}: ${message}`;
+  const normalizeApiError = (payload, fallback) => {
+    const result = { summary: fallback, items: [] };
+    const label = (path) => path.map((part) => part.replaceAll("_", " ")).join(" / ");
+    const visit = (value, path = []) => {
+      if (value === null || value === undefined || value === "") return;
+      if (["string", "number", "boolean"].includes(typeof value)) {
+        const message = `${value}`;
+        result.items.push(path.length ? `${label(path)}: ${message}` : message);
+        return;
+      }
+      if (Array.isArray(value)) {
+        value.forEach((item) => visit(item, path));
+        return;
+      }
+      if (typeof value !== "object") return;
+      if (typeof value.message === "string") {
+        const prefix = typeof value.code === "string" ? `${value.code}: ` : "";
+        result.items.push(`${prefix}${value.message}`);
+        return;
+      }
+      Object.entries(value).forEach(([field, nested]) => visit(nested, [...path, field]));
+    };
+
+    if (typeof payload === "string") return { summary: payload, items: [] };
+    if (Array.isArray(payload)) {
+      visit(payload);
+      return result;
+    }
+    if (!payload || typeof payload !== "object") return result;
+    if (typeof payload.detail === "string" && payload.detail.trim()) {
+      result.summary = payload.detail;
+    }
+    if (Array.isArray(payload.issues)) payload.issues.forEach((issue) => visit(issue));
+    Object.entries(payload).forEach(([field, value]) => {
+      if (["detail", "issues", "code"].includes(field)) return;
+      visit(value, [field]);
     });
-    return messages.length ? messages.join(" ") : fallback;
+    if (result.summary === fallback && typeof payload.code === "string") {
+      result.summary = payload.code.replaceAll("_", " ");
+    }
+    return result;
   };
+
+  const renderApiError = (status, normalized) => {
+    status.replaceChildren();
+    const summary = document.createElement("p");
+    summary.textContent = normalized.summary;
+    status.append(summary);
+    if (normalized.items.length) {
+      const list = document.createElement("ul");
+      normalized.items.forEach((message) => {
+        const item = document.createElement("li");
+        item.textContent = message;
+        list.append(item);
+      });
+      status.append(list);
+    }
+  };
+
+  selectAll("[data-dataset-select]").forEach((datasetSelect) => {
+    const details = document.getElementById(datasetSelect.getAttribute("aria-controls"));
+    if (!details) return;
+    const updateDetails = () => {
+      const option = datasetSelect.selectedOptions[0];
+      const selected = Boolean(option?.value);
+      details.hidden = !selected;
+      if (!selected) return;
+      selectAll("[data-dataset-field]", details).forEach((field) => {
+        const key = field.dataset.datasetField;
+        field.textContent = option.dataset[key] || "Not recorded";
+      });
+    };
+    datasetSelect.addEventListener("change", updateDetails);
+    updateDetails();
+  });
 
   selectAll("form[data-api-form]").forEach((form) => {
     form.addEventListener("submit", async (event) => {
@@ -316,6 +381,7 @@
       form.setAttribute("aria-busy", "true");
       submitters.forEach((button) => { button.disabled = true; });
       if (status) {
+        status.removeAttribute("role");
         status.dataset.state = "loading";
         status.textContent = "Working… Please keep this page open.";
       }
@@ -331,8 +397,14 @@
         });
         const contentType = response.headers.get("content-type") || "";
         const payload = contentType.includes("application/json") ? await response.json() : await response.text();
-        if (!response.ok) throw new Error(apiError(payload, `Request failed (${response.status}).`));
+        if (!response.ok) {
+          const normalized = normalizeApiError(payload, `Request failed (${response.status}).`);
+          const requestError = new Error(normalized.summary);
+          requestError.apiDetails = normalized;
+          throw requestError;
+        }
         if (status) {
+          status.removeAttribute("role");
           status.dataset.state = "success";
           status.textContent = form.dataset.successMessage || "Request completed successfully.";
         }
@@ -346,11 +418,20 @@
         form.removeAttribute("aria-busy");
         if (status) {
           status.dataset.state = "error";
-          status.textContent = error instanceof Error ? error.message : "The request could not be completed.";
+          status.setAttribute("role", "alert");
+          const normalized = error?.apiDetails || {
+            summary: error instanceof Error ? error.message : "The request could not be completed.",
+            items: [],
+          };
+          renderApiError(status, normalized);
           status.setAttribute("tabindex", "-1");
           status.focus();
         } else {
-          window.alert(error instanceof Error ? error.message : "The request could not be completed.");
+          const normalized = error?.apiDetails || {
+            summary: error instanceof Error ? error.message : "The request could not be completed.",
+            items: [],
+          };
+          window.alert([normalized.summary, ...normalized.items].join("\n"));
         }
         submitters.forEach((button) => { button.disabled = false; });
       }

@@ -32,6 +32,8 @@ SUPPORTED_SCHEMA_VERSIONS = (LEGACY_SCHEMA_VERSION, SCHEMA_VERSION)
 MAX_WORKBOOK_BYTES = 20 * 1024 * 1024
 MAX_ROWS_PER_SHEET = 100_000
 SCHEMA_SHEET = "_Schema"
+PRACTICE_NOTICE_KEY = "dataset_notice"
+PRACTICE_NOTICE_VALUE = "SYNTHETIC TEST DATA ONLY - NOT OFFICIAL USM RECORDS"
 
 CellKind = Literal["string", "integer", "boolean", "time", "day"]
 
@@ -1261,7 +1263,12 @@ def _persist_issues(batch: models.ImportBatch, issues: list[Issue]) -> None:
 
 
 @transaction.atomic
-def preview_workbook(content: bytes, term: models.AcademicTerm, user: models.User) -> models.ImportBatch:
+def preview_workbook(
+    content: bytes,
+    term: models.AcademicTerm,
+    user: models.User,
+    data_origin: str = models.DatasetOrigin.UNKNOWN,
+) -> models.ImportBatch:
     """Parse and validate a workbook, persisting only normalized staging rows.
 
     The returned batch has ``PREVIEWED`` status only when it can be committed.
@@ -1272,6 +1279,8 @@ def preview_workbook(content: bytes, term: models.AcademicTerm, user: models.Use
 
     if not isinstance(content, bytes):
         raise TypeError("Workbook content must be bytes.")
+    if data_origin not in models.DatasetOrigin.values:
+        raise ValidationError({"data_origin": "Choose a supported dataset origin."})
     digest = hashlib.sha256(content).hexdigest()
     batch, created = models.ImportBatch.objects.get_or_create(
         term=term,
@@ -1279,9 +1288,19 @@ def preview_workbook(content: bytes, term: models.AcademicTerm, user: models.Use
         defaults={
             "uploaded_by": user,
             "original_filename": f"semester-import-{digest[:12]}.xlsx",
+            "data_origin": data_origin,
         },
     )
     if not created and batch.status == models.ImportStatus.COMMITTED:
+        if data_origin not in {models.DatasetOrigin.UNKNOWN, batch.data_origin}:
+            raise ValidationError(
+                {
+                    "data_origin": (
+                        "DATA_ORIGIN_MISMATCH: the declared origin conflicts with the "
+                        "committed import provenance."
+                    )
+                }
+            )
         return batch
 
     issues: list[Issue] = []
@@ -1312,6 +1331,23 @@ def preview_workbook(content: bytes, term: models.AcademicTerm, user: models.Use
                 f"The file is not a readable XLSX workbook: {exc}",
             )
         else:
+            schema_sheet = workbook[SCHEMA_SHEET] if SCHEMA_SHEET in workbook.sheetnames else None
+            is_generated_practice = bool(
+                schema_sheet
+                and schema_sheet["A5"].value == PRACTICE_NOTICE_KEY
+                and schema_sheet["B5"].value == PRACTICE_NOTICE_VALUE
+            )
+            if is_generated_practice:
+                if data_origin == models.DatasetOrigin.INSTITUTIONAL:
+                    _issue(
+                        issues,
+                        SCHEMA_SHEET,
+                        5,
+                        "dataset_notice",
+                        "DATA_ORIGIN_MISMATCH",
+                        "Generated practice-workbook metadata requires a synthetic data origin.",
+                    )
+                data_origin = models.DatasetOrigin.SYNTHETIC
             schema_version = _read_schema_version(workbook, issues)
             active_schemas = SHEET_SCHEMAS_BY_VERSION.get(schema_version or "", SHEET_SCHEMAS)
             allowed_sheets = set(active_schemas) | {SCHEMA_SHEET}
@@ -1353,12 +1389,14 @@ def preview_workbook(content: bytes, term: models.AcademicTerm, user: models.Use
     batch.error_count = len(issues)
     batch.status = models.ImportStatus.INVALID if issues else models.ImportStatus.PREVIEWED
     batch.uploaded_by = user
+    batch.data_origin = data_origin
     batch.save(update_fields=[
         "summary",
         "total_rows",
         "error_count",
         "status",
         "uploaded_by",
+        "data_origin",
         "updated_at",
     ])
     _persist_issues(batch, issues)
@@ -1373,6 +1411,7 @@ def preview_workbook(content: bytes, term: models.AcademicTerm, user: models.Use
             "status": batch.status,
             "total_rows": batch.total_rows,
             "error_count": batch.error_count,
+            "data_origin": batch.data_origin,
         },
     )
     return batch
@@ -1446,6 +1485,7 @@ def commit_import(batch: models.ImportBatch, user: models.User) -> models.TermDa
             revision_number=next_revision,
             status=models.RevisionStatus.DRAFT,
             label=f"Import {locked.file_hash[:12]}",
+            data_origin=locked.data_origin,
             created_by=user,
         )
 
@@ -1842,6 +1882,7 @@ def commit_import(batch: models.ImportBatch, user: models.User) -> models.TermDa
                 "term_id": locked.term_id,
                 "revision_number": revision.revision_number,
                 "content_hash": revision.content_hash,
+                "data_origin": revision.data_origin,
             },
         )
         # Keep the caller's instance coherent with the locked row while the

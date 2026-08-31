@@ -1568,6 +1568,47 @@ tbody tr:hover {
   animation: status-spin 700ms linear infinite;
 }
 
+.form-status > p {
+  margin: 0;
+}
+
+.form-status > ul {
+  margin: 0.35rem 0 0;
+  padding-left: 1.2rem;
+}
+
+.dataset-details {
+  padding: 0.9rem 1rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-soft);
+}
+
+.dataset-details h3 {
+  margin: 0 0 0.65rem;
+  font-size: 0.9rem;
+}
+
+.dataset-details dl {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+  gap: 0.65rem 1rem;
+  margin: 0;
+}
+
+.dataset-details dt {
+  color: var(--subtle);
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.dataset-details dd {
+  margin: 0.12rem 0 0;
+  overflow-wrap: anywhere;
+  font-size: 0.8rem;
+}
+
 @keyframes status-spin {
   to {
     transform: rotate(360deg);

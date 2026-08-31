@@ -23,7 +23,7 @@
     </div>
     <form action="{% url 'api:formal-study-validate' study.pk %}" method="post" data-api-form data-success-url="{% url 'scheduler:formal-study-detail' study.pk %}" data-success-message="Formal preflight completed. Refreshing the evidence gate…">
       {% csrf_token %}
-      <p class="form-status" data-form-status aria-live="polite"></p>
+      <div class="form-status" data-form-status aria-live="polite"></div>
       <button class="button button--primary" type="submit">Validate formal study</button>
     </form>
   </section>
@@ -36,7 +36,7 @@
     </div>
     <form action="{% url 'api:formal-study-queue' study.pk %}" method="post" data-api-form data-success-url="{% url 'scheduler:formal-study-detail' study.pk %}" data-success-message="Formal benchmark queued. Refreshing run status…">
       {% csrf_token %}
-      <p class="form-status" data-form-status aria-live="polite"></p>
+      <div class="form-status" data-form-status aria-live="polite"></div>
       <button class="button button--primary" type="submit" data-confirm="Queue the complete 260-run formal benchmark sequentially?">Queue formal study</button>
     </form>
   </section>
@@ -49,7 +49,7 @@
     </div>
     <form action="{% url 'api:formal-study-cancel' study.pk %}" method="post" data-api-form data-success-url="{% url 'scheduler:formal-study-detail' study.pk %}" data-success-message="Formal study cancelled. Refreshing the audit state…">
       {% csrf_token %}
-      <p class="form-status" data-form-status aria-live="polite"></p>
+      <div class="form-status" data-form-status aria-live="polite"></div>
       <button class="button button--secondary formal-study-controls__danger" type="submit" data-confirm="Cancel this formal study? This permanently closes its conclusion gate.">Cancel formal study</button>
     </form>
   </section>

@@ -16,11 +16,21 @@ from playwright.sync_api import Page, expect, sync_playwright
 
 from scheduler import models
 from scheduler import views as scheduler_views
-from scheduler.management.commands.seed_demo import build_demo_workbook_bytes
+from scheduler.management.commands.seed_demo import (
+    DEMO_DAILY_LOAD_RULE_CODE,
+    DEMO_FIXED_RULE_CODE,
+    build_demo_workbook_bytes,
+)
 from scheduler.services import workflow as workflow_services
 from scheduler.services.imports import build_import_template
+from scheduler.services.problem_builder import build_and_store_snapshot
+from tests.browser_helpers import assert_browser_assets
 
-pytestmark = [pytest.mark.django_db(transaction=True), pytest.mark.e2e]
+pytestmark = [
+    pytest.mark.django_db(transaction=True),
+    pytest.mark.e2e,
+    pytest.mark.usefixtures("browser_static_storage"),
+]
 
 PASSWORD = "browser-test-password"
 VIEWPORTS = (1440, 1184, 768, 390, 320)
@@ -87,6 +97,7 @@ def _login(page: Page, base_url: str, username: str, password: str = PASSWORD) -
 
 
 def _assert_page_health(page: Page, errors: list[str], *, route: str, width: int) -> None:
+    assert_browser_assets(page)
     expect(page.locator("#main-content")).to_be_visible()
     assert len(page.locator("#main-content").inner_text().strip()) >= 20, (
         f"Blank content at {route} ({width}px)"
@@ -349,10 +360,44 @@ def test_complete_synthetic_browser_journey_and_rendered_states(live_server, tmp
         approved_at=timezone.now(),
     )
     objective.save()
+    fixed_policy = models.ConstraintPolicyVersion.objects.create(
+        rule_code=DEMO_FIXED_RULE_CODE,
+        version=1,
+        title="Fixed 50-student meeting rule",
+        definition="Every meeting contains at most 50 students.",
+        classification=models.ConstraintKind.HARD,
+        owner_office="Office of the University Registrar",
+        source="Synthetic browser fixture",
+        effective_term=term,
+        parameters={"fixed_student_limit": 50},
+        is_approved=True,
+        approved_by=central,
+        approved_at=timezone.now(),
+    )
+    daily_policy = models.ConstraintPolicyVersion.objects.create(
+        rule_code=DEMO_DAILY_LOAD_RULE_CODE,
+        version=1,
+        title="Instructor daily teaching-atom limit",
+        definition="Each instructor follows the approved daily teaching limit.",
+        classification=models.ConstraintKind.HARD,
+        owner_office="Office of Academic Affairs",
+        source="Synthetic browser fixture",
+        effective_term=term,
+        parameters={"unit": "teaching_atom"},
+        is_approved=True,
+        approved_by=central,
+        approved_at=timezone.now(),
+    )
     invalid_path = tmp_path / "synthetic-invalid-empty.xlsx"
     invalid_path.write_bytes(build_import_template())
     valid_path = tmp_path / "synthetic-complete-workflow.xlsx"
-    valid_path.write_bytes(build_demo_workbook_bytes(campus=term.campus))
+    valid_path.write_bytes(
+        build_demo_workbook_bytes(
+            campus=term.campus,
+            fixed_rule_hash=fixed_policy.policy_hash,
+            daily_load_rule_hash=daily_policy.policy_hash,
+        )
+    )
 
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(headless=True, channel="chromium")
@@ -364,6 +409,7 @@ def test_complete_synthetic_browser_journey_and_rendered_states(live_server, tmp
         expect(central_page.get_by_text("Prepare scheduling data", exact=True).first).to_be_visible()
 
         central_page.goto(f"{live_server.url}/imports/", wait_until="networkidle")
+        central_page.select_option("#import-origin", "INSTITUTIONAL")
         central_page.select_option("#import-term", str(term.pk))
         central_page.set_input_files("#import-file", str(invalid_path))
         central_page.get_by_label(
@@ -376,6 +422,7 @@ def test_complete_synthetic_browser_journey_and_rendered_states(live_server, tmp
 
         central_page.select_option("#import-term", str(term.pk))
         central_page.set_input_files("#import-file", str(valid_path))
+        central_page.select_option("#import-origin", "SYNTHETIC")
         central_page.get_by_label(
             "I confirm that I am authorized to use this dataset for the study, that it contains no "
             "unnecessary personal data, and that it will not be placed in the public repository."
@@ -545,4 +592,70 @@ def test_firefox_login_navigation_and_principal_workflow_smoke(live_server) -> N
                 response = page.goto(f"{live_server.url}{route}", wait_until="networkidle")
                 assert response is not None and response.ok
                 _assert_page_health(page, errors, route=f"Firefox {route}", width=width)
+        browser.close()
+
+
+def test_generate_schedule_renders_all_structured_preflight_issues(live_server) -> None:  # type: ignore[no-untyped-def]
+    identifiers = _seed_demo(
+        central_username="preflight-browser",
+        central_password=PASSWORD,
+    )
+    central = models.User.objects.get(pk=identifiers["central_user_id"])
+    revision = models.TermDatasetRevision.objects.get(pk=identifiers["revision_id"])
+    objective = models.ObjectiveProfile.objects.get(pk=identifiers["objective_profile_id"])
+    snapshot, _ = build_and_store_snapshot(revision, objective, central)
+
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=True, channel="chromium")
+        page = browser.new_page(viewport={"width": 1440, "height": 900})
+        _login(page, live_server.url, central.username)
+        response = page.goto(f"{live_server.url}/runs/", wait_until="networkidle")
+        assert response is not None and response.ok
+        assert_browser_assets(page)
+
+        revision_select = page.get_by_label("Prepared semester data")
+        revision_select.select_option(str(revision.pk))
+        expect(page.get_by_role("heading", name="Selected dataset")).to_be_visible()
+        expect(page.get_by_text("Synthetic / practice", exact=True)).to_be_visible()
+        snapshot_option = page.get_by_label("Checked semester data").locator(
+            f"option[value='{snapshot.pk}']"
+        )
+        expect(snapshot_option).to_contain_text(f"Rev {revision.revision_number}")
+        expect(snapshot_option).to_contain_text(f"snapshot {snapshot.snapshot_hash[:12]}")
+
+        page.route(
+            "**/api/v1/snapshots/",
+            lambda route: route.fulfill(
+                status=400,
+                content_type="application/json",
+                body=json.dumps(
+                    {
+                        "code": "PREFLIGHT_FAILED",
+                        "detail": "The selected revision has two scheduling issues.",
+                        "issues": [
+                            {
+                                "code": "ROOM_PROFILE_MISSING",
+                                "message": "Room RM-404 has no availability profile.",
+                            },
+                            {
+                                "code": "INSTRUCTOR_PROFILE_MISSING",
+                                "message": "Instructor FAC-404 has no availability profile.",
+                            },
+                        ],
+                    }
+                ),
+            ),
+        )
+        page.get_by_label("Schedule quality policy").select_option(str(objective.pk))
+        page.get_by_role("button", name="Check semester data").click()
+
+        alert = page.get_by_role("alert")
+        expect(alert).to_contain_text("The selected revision has two scheduling issues.")
+        expect(alert).to_contain_text(
+            "ROOM_PROFILE_MISSING: Room RM-404 has no availability profile."
+        )
+        expect(alert).to_contain_text(
+            "INSTRUCTOR_PROFILE_MISSING: Instructor FAC-404 has no availability profile."
+        )
+        expect(alert).not_to_contain_text("[object Object]")
         browser.close()

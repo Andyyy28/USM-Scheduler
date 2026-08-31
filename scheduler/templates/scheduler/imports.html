@@ -19,9 +19,10 @@
     <form class="form-stack" action="{% url 'api:import-preview' %}" method="post" enctype="multipart/form-data" data-api-form>
       {% csrf_token %}
       <div class="field"><label for="import-term">Academic term</label><select id="import-term" name="term_id" required><option value="">Choose the target term</option>{% for term in terms %}<option value="{{ term.id }}">{{ term.academic_year }} · {{ term.semester }} · {{ term.campus }}</option>{% endfor %}</select><small>Previously completed semester data remains unchanged.</small></div>
+      <div class="field"><label for="import-origin">Dataset origin</label><select id="import-origin" name="data_origin" required><option value="">Choose the dataset origin</option><option value="INSTITUTIONAL">Authorized institutional data</option><option value="SYNTHETIC">Synthetic / practice data</option></select><small>Generated practice workbooks are always recorded as synthetic.</small></div>
       <div class="field"><span id="import-file-label">Semester workbook</span><label class="file-drop" for="import-file" data-file-drop role="button" tabindex="0" aria-controls="import-file" aria-describedby="import-file-help"><span class="file-drop__icon" aria-hidden="true">⇧</span><strong>Choose an Excel workbook</strong><span data-file-name aria-live="polite">or drag and drop it here</span><small id="import-file-help">XLSX only. Use the blank template or synthetic trial workbook above.</small></label><input class="visually-hidden" id="import-file" name="file" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" required tabindex="-1" aria-labelledby="import-file-label"></div>
       <label class="check-field"><input type="checkbox" name="confirm_authorized" value="true" required><span>I confirm that I am authorized to use this dataset for the study, that it contains no unnecessary personal data, and that it will not be placed in the public repository.</span></label>
-      <p class="form-status" data-form-status aria-live="polite"></p>
+      <div class="form-status" data-form-status aria-live="polite"></div>
       <button class="button button--primary" type="submit" {% if not terms %}disabled aria-disabled="true"{% endif %}>Check workbook</button>
     </form>
   </section>

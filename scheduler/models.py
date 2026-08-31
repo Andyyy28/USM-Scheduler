@@ -380,11 +380,22 @@ class RevisionStatus(models.TextChoices):
     SUPERSEDED = "SUPERSEDED", "Superseded"
 
 
+class DatasetOrigin(models.TextChoices):
+    UNKNOWN = "UNKNOWN", "Not recorded"
+    SYNTHETIC = "SYNTHETIC", "Synthetic / practice"
+    INSTITUTIONAL = "INSTITUTIONAL", "Authorized institutional"
+
+
 class TermDatasetRevision(TimestampedModel):
     term = models.ForeignKey(AcademicTerm, on_delete=models.PROTECT, related_name="dataset_revisions")
     revision_number = models.PositiveIntegerField()
     status = models.CharField(max_length=12, choices=RevisionStatus.choices, default=RevisionStatus.DRAFT)
     label = models.CharField(max_length=160, blank=True)
+    data_origin = models.CharField(
+        max_length=16,
+        choices=DatasetOrigin.choices,
+        default=DatasetOrigin.UNKNOWN,
+    )
     content_hash = models.CharField(max_length=64, validators=[SHA256_VALIDATOR], blank=True)
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -420,12 +431,19 @@ class TermDatasetRevision(TimestampedModel):
         if self.pk:
             previous = type(self).objects.filter(pk=self.pk).first()
             if previous and previous.is_immutable:
-                content_snapshot = (self.term_id, self.revision_number, self.label, self.content_hash)
+                content_snapshot = (
+                    self.term_id,
+                    self.revision_number,
+                    self.label,
+                    self.content_hash,
+                    self.data_origin,
+                )
                 previous_content = (
                     previous.term_id,
                     previous.revision_number,
                     previous.label,
                     previous.content_hash,
+                    previous.data_origin,
                 )
                 allowed_statuses = {previous.status}
                 if previous.status == RevisionStatus.COMMITTED:
@@ -1406,6 +1424,11 @@ class ImportBatch(TimestampedModel):
         related_name="import_batches",
     )
     original_filename = models.CharField(max_length=255)
+    data_origin = models.CharField(
+        max_length=16,
+        choices=DatasetOrigin.choices,
+        default=DatasetOrigin.UNKNOWN,
+    )
     file_hash = models.CharField(max_length=64, validators=[SHA256_VALIDATOR])
     status = models.CharField(max_length=12, choices=ImportStatus.choices, default=ImportStatus.UPLOADED)
     total_rows = models.PositiveIntegerField(default=0)
@@ -1436,6 +1459,20 @@ class ImportBatch(TimestampedModel):
             and self.committed_revision.term_id != self.term_id
         ):
             raise ValidationError({"committed_revision": "The revision must belong to the imported term."})
+
+    def save(self, *args: Any, **kwargs: Any) -> None:
+        if self.pk:
+            previous = type(self).objects.filter(pk=self.pk).only(
+                "status", "data_origin"
+            ).first()
+            if (
+                previous
+                and previous.status == ImportStatus.COMMITTED
+                and self.data_origin != previous.data_origin
+            ):
+                raise ValidationError("A committed import batch's data origin is immutable.")
+        self.clean()
+        super().save(*args, **kwargs)
 
     def __str__(self) -> str:
         return f"{self.original_filename} ({self.status})"

@@ -14,6 +14,8 @@ from django.shortcuts import render
 from django.utils.text import slugify
 from django.views.decorators.http import require_GET
 
+from scheduler.services.revision_metadata import with_dataset_counts
+
 
 def _model(name: str) -> Any | None:
     """Resolve domain models at request time so the UI can evolve independently."""
@@ -150,16 +152,49 @@ def _run_metric(run: Any, *names: str, default: Any = None) -> Any:
 def _snapshot_view(snapshot: Any) -> SimpleNamespace:
     snapshot_hash = _first(snapshot, "snapshot_hash", default="")
     schema_version = str(_first(snapshot, "schema_version", default=""))
+    revision = _first(snapshot, "revision")
+    term_label = str(_first(snapshot, "revision.term", default="—")).replace("-", "–")
+    revision_number = _first(revision, "revision_number", default="—")
+    event_count = _first(snapshot, "event_count", default="—")
+    short_hash = str(snapshot_hash)[:12] if snapshot_hash else "no hash"
     return SimpleNamespace(
         id=str(_first(snapshot, "pk", "id", default="")),
         label=str(snapshot),
         term=str(_first(snapshot, "revision.term", default="—")),
         revision=str(_first(snapshot, "revision", default="—")),
-        event_count=_first(snapshot, "event_count", default="—"),
+        revision_number=revision_number,
+        event_count=event_count,
         candidate_count=_first(snapshot, "candidate_count", default="—"),
         schema_version=schema_version,
         supports_formal_study=schema_version == "1.2",
-        short_hash=str(snapshot_hash)[:12] if snapshot_hash else "no hash",
+        short_hash=short_hash,
+        option_label=(
+            f"{term_label} · Rev {revision_number} · {event_count} meetings · "
+            f"snapshot {short_hash}"
+        ),
+    )
+
+
+def _revision_view(revision: Any) -> SimpleNamespace:
+    term = revision.term
+    try:
+        source_filename = revision.source_import_batch.original_filename
+    except ObjectDoesNotExist:
+        source_filename = ""
+    source_or_label = source_filename or revision.label or "Unlabelled dataset"
+    academic_year = str(term.academic_year).replace("-", "–")
+    term_label = f"{academic_year} · {term.get_semester_display()} · {term.campus}"
+    return SimpleNamespace(
+        id=str(revision.pk),
+        option_label=f"{term_label} · Rev {revision.revision_number} · {source_or_label}",
+        label=revision.label or "—",
+        source_filename=source_filename or "Not available",
+        data_origin=revision.get_data_origin_display(),
+        committed_at=revision.committed_at,
+        section_count=revision.section_count,
+        meeting_count=revision.meeting_count,
+        room_count=revision.room_count,
+        instructor_count=revision.instructor_count,
     )
 
 
@@ -1000,11 +1035,16 @@ def terms(request: HttpRequest) -> HttpResponse:
 def runs(request: HttpRequest) -> HttpResponse:
     rows = [_run_view(run) for run in _safe_list("ScheduleRun", limit=250)]
     snapshots = [_snapshot_view(item) for item in _safe_list("ProblemSnapshot", limit=100)]
-    revisions = _safe_list(
-        "TermDatasetRevision",
-        limit=100,
-        filters={"status": "COMMITTED"},
-    )
+    revision_model = _model("TermDatasetRevision")
+    revisions = [] if revision_model is None else [
+        _revision_view(revision)
+        for revision in with_dataset_counts(
+            revision_model.objects.filter(status="COMMITTED").select_related(
+                "term", "source_import_batch"
+            )
+        )
+        .order_by("-term__starts_on", "-revision_number")[:100]
+    ]
     objectives = _safe_list("ObjectiveProfile", limit=100, filters={"is_approved": True})
     algorithm = request.GET.get("algorithm", "").strip().lower()
     status = request.GET.get("status", "").strip().lower()

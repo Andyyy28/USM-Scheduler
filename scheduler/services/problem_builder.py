@@ -391,7 +391,12 @@ def build_problem(
     }
     room_profiles = {
         profile.room_id: profile
-        for profile in revision.room_availability_profiles.select_related("room").prefetch_related(
+        for profile in revision.room_availability_profiles.filter(
+            room__is_active=True,
+            room__campus=revision.term.campus,
+        )
+        .select_related("room")
+        .prefetch_related(
             Prefetch(
                 "availability_rows",
                 queryset=models.RoomAvailability.objects.filter(is_available=True),
@@ -431,21 +436,45 @@ def build_problem(
     if not meetings:
         issues.append(BuildIssue("NO_MEETINGS", "The revision has no active meeting requirements."))
 
+    revision_room_authorizations = list(
+        models.RoomAuthorization.objects.filter(revision=revision).select_related(
+            "college", "department"
+        )
+    )
+    active_locks = {
+        lock.meeting_requirement_id: lock
+        for lock in models.LockedAssignment.objects.filter(
+            meeting_requirement__offering__revision=revision,
+            is_active=True,
+        ).select_related("room", "start_time_slot")
+    }
     rooms = list(
-        models.Room.objects.filter(is_active=True, campus=revision.term.campus)
+        models.Room.objects.filter(pk__in=room_profiles)
         .select_related("laboratory_profile")
         .prefetch_related(
             Prefetch("capability_links", to_attr="prefetched_capability_links"),
-            Prefetch(
-                "authorizations",
-                queryset=models.RoomAuthorization.objects.filter(revision=revision),
-                to_attr="prefetched_authorizations",
-            ),
         )
         .order_by("code")
     )
     if not rooms:
-        issues.append(BuildIssue("NO_ROOMS", "The term campus has no active rooms."))
+        issues.append(BuildIssue("NO_ROOMS", "The revision has no active rooms."))
+
+    referenced_room_ids = {
+        authorization.room_id for authorization in revision_room_authorizations
+    }
+    referenced_room_ids.update(lock.room_id for lock in active_locks.values())
+    missing_referenced_rooms = models.Room.objects.filter(
+        pk__in=referenced_room_ids - room_profiles.keys()
+    ).order_by("code")
+    for room in missing_referenced_rooms:
+        issues.append(
+            BuildIssue(
+                "MISSING_ROOM_AVAILABILITY_PROFILE",
+                f"Room {room.code} has no availability profile or full-availability acknowledgement.",
+                "Room",
+                str(room.pk),
+            )
+        )
 
     reserved_blocks = list(
         revision.reserved_time_blocks.filter(is_active=True)
@@ -489,21 +518,14 @@ def build_problem(
         room.pk: {link.capability_id for link in room.prefetched_capability_links}
         for room in rooms
     }
-    room_authorizations = {
-        room.pk: list(room.prefetched_authorizations) for room in rooms
-    }
+    room_authorizations = {room.pk: [] for room in rooms}
+    for authorization in revision_room_authorizations:
+        if authorization.room_id in room_authorizations:
+            room_authorizations[authorization.room_id].append(authorization)
     room_available = {}
     for room in rooms:
         profile = room_profiles.get(room.pk)
-        if profile is None:
-            issues.append(
-                BuildIssue(
-                    "MISSING_ROOM_AVAILABILITY_PROFILE",
-                    f"Room {room.code} has no availability profile or full-availability acknowledgement.",
-                    "Room",
-                    str(room.pk),
-                )
-            )
+        if profile is None:  # Defensive: rooms are selected from revision-bound profiles above.
             continue
         room_available[room.pk] = _available_atom_ids_for_room(profile, all_slot_ids)
 
@@ -661,14 +683,6 @@ def build_problem(
 
     events: list[MeetingEvent] = []
     locks: list[Assignment] = []
-    active_locks = {
-        lock.meeting_requirement_id: lock
-        for lock in models.LockedAssignment.objects.filter(
-            meeting_requirement__offering__revision=revision,
-            is_active=True,
-        ).select_related("room", "start_time_slot")
-    }
-
     # Window construction depends only on the day and meeting duration.  Build
     # each ordered sequence once, then reuse it for every room/event while
     # retaining the legacy day/start ordering used by candidate generation.
@@ -971,6 +985,17 @@ def build_and_store_snapshot(
     objective_profile: models.ObjectiveProfile,
     created_by: models.User,
 ) -> tuple[models.ProblemSnapshot, ProblemBuildResult]:
+    if not objective_profile.is_approved:
+        raise ProblemBuildError(
+            [
+                BuildIssue(
+                    "OBJECTIVE_NOT_APPROVED",
+                    "The objective profile must be approved before a snapshot can be created.",
+                    "ObjectiveProfile",
+                    str(objective_profile.pk),
+                )
+            ]
+        )
     result = build_problem(revision, objective_profile)
     candidate_map = {
         event.event_id: [candidate.to_dict() for candidate in event.candidates]

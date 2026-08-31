@@ -43,7 +43,7 @@
     <div class="field"><label for="clone-semester">Semester</label><select id="clone-semester" name="semester" required><option value="FIRST">First semester</option><option value="SECOND">Second semester</option><option value="MIDYEAR">Midyear</option></select></div>
     <div class="field"><label for="clone-start">Starts on</label><input id="clone-start" name="starts_on" type="date" required></div><div class="field"><label for="clone-end">Ends on</label><input id="clone-end" name="ends_on" type="date" required></div>
     <div class="field"><label for="clone-label">Planning label</label><input id="clone-label" name="label" placeholder="Next semester planning base"></div>
-    <div class="form-actions form-actions--full"><p class="form-status" data-form-status aria-live="polite"></p><button class="button button--primary" type="submit" {% if not clone_sources %}disabled aria-disabled="true"{% endif %}>Clone term inputs</button></div>
+    <div class="form-actions form-actions--full"><div class="form-status" data-form-status aria-live="polite"></div><button class="button button--primary" type="submit" {% if not clone_sources %}disabled aria-disabled="true"{% endif %}>Clone term inputs</button></div>
   </form>
 </section>{% endif %}
 
@@ -53,7 +53,7 @@
     {% csrf_token %}
     <div class="field"><label for="finalize-revision">Draft revision</label><select id="finalize-revision" required data-finalize-source><option value="">Select a draft</option>{% for revision in draft_revisions %}<option value="{% url 'api:revision-finalize' revision.id %}">{{ revision }}</option>{% endfor %}</select></div>
     <div class="field"><label for="finalize-objective">Approved objective profile</label><select id="finalize-objective" name="objective_profile_id" required><option value="">Select a term-matching or global profile</option>{% for profile in approved_objectives %}<option value="{{ profile.id }}">{{ profile }}</option>{% endfor %}</select><small>A cloned profile must be reviewed and approved in administration before finalization.</small></div>
-    <div class="form-actions form-actions--full"><p class="form-status" data-form-status aria-live="polite"></p><button class="button button--primary" type="submit" {% if not approved_objectives %}disabled aria-disabled="true"{% endif %} data-confirm="Check and save this edited semester data?">Check and save semester data</button></div>
+    <div class="form-actions form-actions--full"><div class="form-status" data-form-status aria-live="polite"></div><button class="button button--primary" type="submit" {% if not approved_objectives %}disabled aria-disabled="true"{% endif %} data-confirm="Check and save this edited semester data?">Check and save semester data</button></div>
   </form>
 </section>{% endif %}
 

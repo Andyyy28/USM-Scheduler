@@ -11,6 +11,32 @@ from scheduler import models
 pytestmark = pytest.mark.django_db
 
 
+def test_dataset_origin_defaults_to_not_recorded_for_historical_compatibility() -> None:
+    user = models.User.objects.create_user(username="origin-default")
+    term = models.AcademicTerm.objects.create(
+        academic_year="2026-2027",
+        semester=models.Semester.FIRST,
+        campus="Origin Test",
+        starts_on=date(2026, 8, 1),
+        ends_on=date(2026, 12, 20),
+    )
+    revision = models.TermDatasetRevision.objects.create(
+        term=term,
+        revision_number=1,
+        created_by=user,
+    )
+    batch = models.ImportBatch.objects.create(
+        term=term,
+        uploaded_by=user,
+        original_filename="historical.xlsx",
+        file_hash="0" * 64,
+    )
+
+    assert revision.data_origin == models.DatasetOrigin.UNKNOWN
+    assert revision.get_data_origin_display() == "Not recorded"
+    assert batch.data_origin == models.DatasetOrigin.UNKNOWN
+
+
 def build_academic_graph(suffix: str = "") -> dict[str, object]:
     user = models.User.objects.create_user(
         username=f"scheduler{suffix}",

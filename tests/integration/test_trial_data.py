@@ -142,6 +142,7 @@ def test_trial_workbook_imports_and_preflights_deterministically() -> None:
     batch = preview_workbook(build_trial_workbook_bytes(**policy_hashes), term, central)
 
     assert batch.status == models.ImportStatus.PREVIEWED
+    assert batch.data_origin == models.DatasetOrigin.SYNTHETIC
     assert batch.error_count == 0
     revision = commit_import(batch, central)
     assert revision.sections.count() == 5
@@ -174,6 +175,26 @@ def test_trial_workbook_imports_and_preflights_deterministically() -> None:
     }.items() <= {
         event.event_id: event.candidates[0].candidate_id for event in problem.events
     }.items()
+
+
+def test_trial_workbook_rejects_conflicting_institutional_origin() -> None:
+    central = models.User.objects.create_user(
+        username="trial-origin-scheduler",
+        role=models.UserRole.CENTRAL_SCHEDULER,
+    )
+    term = _term()
+    policy_hashes = _approved_trial_policies(term, central)
+
+    batch = preview_workbook(
+        build_trial_workbook_bytes(**policy_hashes),
+        term,
+        central,
+        data_origin=models.DatasetOrigin.INSTITUTIONAL,
+    )
+
+    assert batch.status == models.ImportStatus.INVALID
+    assert batch.data_origin == models.DatasetOrigin.SYNTHETIC
+    assert batch.errors.filter(code="DATA_ORIGIN_MISMATCH").exists()
 
 
 @pytest.mark.diagnostic

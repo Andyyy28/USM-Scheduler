@@ -74,6 +74,7 @@ def clone_term_revision(
             f"revision {source.revision_number}"
         ),
         content_hash="",
+        data_origin=source.data_origin,
         created_by=actor,
     )
     _save_validated(revision)

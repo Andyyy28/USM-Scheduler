@@ -3,6 +3,7 @@ from __future__ import annotations
 from io import BytesIO
 
 import pytest
+from django.core.exceptions import ValidationError
 from django.core.management import call_command
 from django.urls import reverse
 from django.utils import timezone
@@ -620,6 +621,88 @@ def test_same_bytes_reuse_preview_and_committed_batch_cannot_commit_twice() -> N
     assert returned.committed_revision_id == revision.pk
     with pytest.raises(ImportCommitError, match="already been committed"):
         commit_import(first, user)
+
+
+def test_origin_propagates_to_commit_and_is_immutable() -> None:
+    term = make_term()
+    user = make_user()
+    batch = preview_workbook(
+        workbook_bytes(valid_workbook(make_policy(term, user))),
+        term,
+        user,
+        data_origin=models.DatasetOrigin.INSTITUTIONAL,
+    )
+
+    revision = commit_import(batch, user)
+
+    assert batch.data_origin == models.DatasetOrigin.INSTITUTIONAL
+    assert revision.data_origin == models.DatasetOrigin.INSTITUTIONAL
+    revision.data_origin = models.DatasetOrigin.SYNTHETIC
+    with pytest.raises(ValidationError, match="immutable"):
+        revision.save()
+    batch.data_origin = models.DatasetOrigin.SYNTHETIC
+    with pytest.raises(ValidationError, match="immutable"):
+        batch.save()
+
+
+def test_new_revision_uses_only_its_revision_bound_room_profiles() -> None:
+    term = make_term()
+    user = make_user()
+    policy = make_policy(term, user)
+
+    def workbook_for_room(code: str):  # type: ignore[no-untyped-def]
+        workbook = valid_workbook(policy)
+        for sheet_name in (
+            "Rooms",
+            "RoomCapabilities",
+            "RoomAuthorizations",
+            "LaboratoryProfiles",
+            "Locks",
+        ):
+            sheet = workbook[sheet_name]
+            for row in sheet.iter_rows(min_row=2):
+                for cell in row:
+                    if cell.value == "CLAB-1":
+                        cell.value = code
+        return workbook
+
+    older = commit_import(
+        preview_workbook(
+            workbook_bytes(workbook_for_room("OLD-LAB")),
+            term,
+            user,
+            data_origin=models.DatasetOrigin.INSTITUTIONAL,
+        ),
+        user,
+    )
+    newer = commit_import(
+        preview_workbook(
+            workbook_bytes(workbook_for_room("NEW-LAB")),
+            term,
+            user,
+            data_origin=models.DatasetOrigin.INSTITUTIONAL,
+        ),
+        user,
+    )
+    objective = models.ObjectiveProfile.objects.create(
+        name="Revision room isolation",
+        term=term,
+        is_approved=True,
+        approved_by=user,
+    )
+
+    result = build_problem(newer, objective)
+    candidate_room_ids = {
+        candidate.room_id
+        for event in result.problem.events
+        for candidate in event.candidates
+    }
+
+    assert older.room_availability_profiles.get().room.code == "OLD-LAB"
+    assert newer.room_availability_profiles.get().room.code == "NEW-LAB"
+    assert candidate_room_ids == {
+        str(newer.room_availability_profiles.get().room_id)
+    }
 
 
 def test_management_command_writes_template_and_protects_existing_file(tmp_path) -> None:

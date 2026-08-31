@@ -279,7 +279,12 @@ class Command(BaseCommand):
             fixed_rule_hash=fixed_policy.policy_hash,
             daily_load_rule_hash=daily_policy.policy_hash,
         )
-        batch = preview_workbook(content, term=term, user=central)
+        batch = preview_workbook(
+            content,
+            term=term,
+            user=central,
+            data_origin=models.DatasetOrigin.SYNTHETIC,
+        )
         if batch.status == models.ImportStatus.INVALID:
             diagnostics = "; ".join(
                 f"{error.sheet_name}:{error.row_number or '-'} {error.code} {error.message}"

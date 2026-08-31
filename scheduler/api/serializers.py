@@ -16,13 +16,46 @@ class AcademicTermSerializer(serializers.ModelSerializer):
 
 class TermDatasetRevisionSerializer(serializers.ModelSerializer):
     term = AcademicTermSerializer(read_only=True)
+    data_origin_display = serializers.CharField(source="get_data_origin_display", read_only=True)
+    source_filename = serializers.SerializerMethodField()
+    section_count = serializers.SerializerMethodField()
+    meeting_count = serializers.SerializerMethodField()
+    room_count = serializers.SerializerMethodField()
+    instructor_count = serializers.SerializerMethodField()
 
     class Meta:
         model = models.TermDatasetRevision
         fields = [
             "id", "term", "revision_number", "status", "label", "content_hash",
-            "created_at", "committed_at",
+            "data_origin", "data_origin_display", "source_filename", "section_count",
+            "meeting_count", "room_count", "instructor_count", "created_at", "committed_at",
         ]
+
+    def get_source_filename(self, obj):
+        try:
+            return obj.source_import_batch.original_filename
+        except models.ImportBatch.DoesNotExist:
+            return ""
+
+    @staticmethod
+    def _count(obj, annotation, relation):
+        value = getattr(obj, annotation, None)
+        return value if value is not None else getattr(obj, relation).count()
+
+    def get_section_count(self, obj):
+        return self._count(obj, "section_count", "sections")
+
+    def get_meeting_count(self, obj):
+        value = getattr(obj, "meeting_count", None)
+        if value is not None:
+            return value
+        return models.MeetingRequirement.objects.filter(offering__revision=obj).count()
+
+    def get_room_count(self, obj):
+        return self._count(obj, "room_count", "room_availability_profiles")
+
+    def get_instructor_count(self, obj):
+        return self._count(obj, "instructor_count", "instructor_availability_profiles")
 
 
 class ObjectiveProfileSerializer(serializers.ModelSerializer):
@@ -206,11 +239,13 @@ class ImportErrorSerializer(serializers.ModelSerializer):
 class ImportBatchSerializer(serializers.ModelSerializer):
     errors = ImportErrorSerializer(many=True, read_only=True)
     safe_summary = serializers.SerializerMethodField()
+    data_origin_display = serializers.CharField(source="get_data_origin_display", read_only=True)
 
     class Meta:
         model = models.ImportBatch
         fields = [
-            "id", "term_id", "original_filename", "file_hash", "status", "total_rows",
+            "id", "term_id", "original_filename", "file_hash", "data_origin",
+            "data_origin_display", "status", "total_rows",
             "error_count", "safe_summary", "committed_revision_id", "created_at", "errors",
         ]
 
