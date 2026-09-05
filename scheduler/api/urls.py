@@ -26,6 +26,47 @@ urlpatterns = [
         views.ExperimentExportView.as_view(),
         name="experiment-export",
     ),
+    path("formal-studies/", views.FormalStudyListCreateView.as_view(), name="formal-studies"),
+    path(
+        "formal-studies/<int:study_id>/",
+        views.FormalStudyDetailView.as_view(),
+        name="formal-study-detail",
+    ),
+    path(
+        "formal-studies/<int:study_id>/validate/",
+        views.FormalStudyValidateView.as_view(),
+        name="formal-study-validate",
+    ),
+    path(
+        "formal-studies/<int:study_id>/queue/",
+        views.FormalStudyQueueView.as_view(),
+        name="formal-study-queue",
+    ),
+    path(
+        "formal-studies/<int:study_id>/cancel/",
+        views.FormalStudyCancelView.as_view(),
+        name="formal-study-cancel",
+    ),
+    path(
+        "formal-studies/<int:study_id>/analysis/",
+        views.FormalStudyAnalysisView.as_view(),
+        name="formal-study-analysis",
+    ),
+    path(
+        "formal-studies/<int:study_id>/evidence/",
+        views.FormalStudyEvidenceView.as_view(),
+        name="formal-study-evidence",
+    ),
+    path(
+        "formal-studies/runs/<int:run_id>/classify-failure/",
+        views.FormalRunFailureClassificationView.as_view(),
+        name="formal-run-classify-failure",
+    ),
+    path(
+        "formal-studies/runs/<int:run_id>/replace-pair/",
+        views.FormalRunPairedReplacementView.as_view(),
+        name="formal-run-replace-pair",
+    ),
     path("runs/", views.RunListCreateView.as_view(), name="runs"),
     path("runs/compare/", views.RunComparisonView.as_view(), name="run-comparison"),
     path("runs/<int:run_id>/", views.RunDetailView.as_view(), name="run-detail"),

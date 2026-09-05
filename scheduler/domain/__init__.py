@@ -21,6 +21,7 @@ from .contracts import (
     ViolationCode,
 )
 from .hashing import canonical_json, canonical_sha256
+from .prepared import PreparedProblem
 from .scoring import resolve_assignments, score_schedule
 from .validation import validate_schedule
 
@@ -31,6 +32,7 @@ __all__ = [
     "MeetingEvent",
     "ObjectiveBreakdown",
     "ObjectiveProfile",
+    "PreparedProblem",
     "ProblemInstance",
     "RoomAuthorizationGrant",
     "RoomAuthorizationRequirement",

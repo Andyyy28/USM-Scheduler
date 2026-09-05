@@ -15,6 +15,7 @@ from rest_framework.test import APIClient
 
 from scheduler import models
 from scheduler.management.commands.seed_demo import build_demo_workbook_bytes
+from scheduler.services.problem_builder import BuildIssue, ProblemBuildError
 
 pytestmark = pytest.mark.django_db
 
@@ -36,6 +37,66 @@ def test_inactive_central_user_cannot_retain_privileged_api_access() -> None:
 
     assert client.get(reverse("api:import-template")).status_code == 403
     assert client.post(reverse("api:snapshots"), {}, format="json").status_code == 403
+
+
+def test_snapshot_api_rejects_unapproved_objective_without_persisting() -> None:
+    identifiers = seed_demo()
+    central = models.User.objects.get(pk=identifiers["central_user_id"])
+    revision = models.TermDatasetRevision.objects.get(pk=identifiers["revision_id"])
+    objective = models.ObjectiveProfile.objects.create(
+        name="Draft objective",
+        term=revision.term,
+        is_approved=False,
+    )
+    client = APIClient()
+    client.force_authenticate(central)
+
+    response = client.post(
+        reverse("api:snapshots"),
+        {"revision_id": revision.pk, "objective_profile_id": objective.pk},
+        format="json",
+    )
+
+    assert response.status_code == 400
+    assert response.json()["code"] == "PREFLIGHT_FAILED"
+    assert response.json()["detail"]
+    assert response.json()["issues"][0]["code"] == "OBJECTIVE_NOT_APPROVED"
+    assert not models.ProblemSnapshot.objects.filter(objective_profile=objective).exists()
+
+
+def test_snapshot_api_preserves_every_structured_preflight_issue(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    identifiers = seed_demo()
+    central = models.User.objects.get(pk=identifiers["central_user_id"])
+    client = APIClient()
+    client.force_authenticate(central)
+
+    def fail_build(*_args, **_kwargs):  # type: ignore[no-untyped-def]
+        raise ProblemBuildError(
+            [
+                BuildIssue("FIRST_ISSUE", "First readable issue."),
+                BuildIssue("SECOND_ISSUE", "Second readable issue."),
+            ]
+        )
+
+    monkeypatch.setattr("scheduler.api.views.build_and_store_snapshot", fail_build)
+    response = client.post(
+        reverse("api:snapshots"),
+        {
+            "revision_id": identifiers["revision_id"],
+            "objective_profile_id": identifiers["objective_profile_id"],
+        },
+        format="json",
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {
+        "code": "PREFLIGHT_FAILED",
+        "detail": "First readable issue.; Second readable issue.",
+        "issues": [
+            {"code": "FIRST_ISSUE", "message": "First readable issue.", "entity_type": "", "entity_id": ""},
+            {"code": "SECOND_ISSUE", "message": "Second readable issue.", "entity_type": "", "entity_id": ""},
+        ],
+    }
 
 
 def test_seed_demo_is_deterministic_idempotent_deidentified_and_password_safe() -> None:
@@ -99,7 +160,15 @@ def test_authenticated_api_full_schedule_workflow() -> None:
         reverse("api:revisions", kwargs={"term_id": identifiers["term_id"]})
     )
     assert revision_response.status_code == 200
-    assert revision_response.json()[0]["status"] == models.RevisionStatus.COMMITTED
+    revision_payload = revision_response.json()[0]
+    assert revision_payload["status"] == models.RevisionStatus.COMMITTED
+    assert revision_payload["data_origin"] == models.DatasetOrigin.SYNTHETIC
+    assert revision_payload["data_origin_display"] == "Synthetic / practice"
+    assert revision_payload["source_filename"]
+    assert revision_payload["section_count"] == 1
+    assert revision_payload["meeting_count"] == 2
+    assert revision_payload["room_count"] == 2
+    assert revision_payload["instructor_count"] == 2
 
     snapshot_response = client.post(
         reverse("api:snapshots"),

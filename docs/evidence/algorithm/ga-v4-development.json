@@ -1,0 +1,596 @@
+{
+  "comparison_order": [
+    "after-final",
+    "before-repeat"
+  ],
+  "date": "2026-08-30",
+  "environment": {
+    "platform": "Windows-11-10.0.26200-SP0",
+    "python": "3.12.14"
+  },
+  "evidence_class": "diagnostic_not_formal_thesis_evidence",
+  "execution": {
+    "cases": [
+      "moderate_mixed",
+      "tight_contention",
+      "daily_limit_stress"
+    ],
+    "limitations": [
+      "Synthetic diagnostic fixtures are not formal thesis evaluation evidence.",
+      "No DB or institutional records are accessed; no profiles are frozen or winners selected.",
+      "Time-bounded incumbents vary with machine load despite identical seeds.",
+      "Profiler overhead changes the search budget; compare only matching profile modes.",
+      "Replay also requires matching harness and supporting source hashes."
+    ],
+    "mode": "serial",
+    "profiled": false,
+    "seconds_per_measured_run": 3.0,
+    "seeds": [
+      5001,
+      5002,
+      5003,
+      5004,
+      5005
+    ],
+    "warmup_seconds_per_case": 0.25,
+    "warmup_seed": 5001,
+    "worker_count": 1
+  },
+  "harness_sha256": "415a662d949b193ecc055a73e7ab5df704064e3607313086379fcfb2b3a42df9",
+  "limitations": [
+    "Five shared seeds on three invented instances with a three-second budget are exploratory diagnostics, not institutional evidence or statistical superiority.",
+    "No formal tuning profiles, final experiment seeds, objective weights, or CP-SAT implementation were changed.",
+    "Raw reports and source/problem snapshots are stored locally under ignored experiment-results; preserve that directory when transferring the evidence.",
+    "Windows clock measurements are visibly quantized; zero recorded time does not mean zero computation.",
+    "The fully occupied fixture has a validated feasible witness, but neither solver revision found feasibility within these short runs."
+  ],
+  "purpose": "Matched synthetic GA implementation comparison; no formal solver-profile selection.",
+  "raw_reports": {
+    "after": {
+      "path": "experiment-results/ga-tuning-2026-08-30/after-final.json",
+      "sha256": "7984aa6e5ea8d6ea703ce4bdeee50895dcc306710c9cf14137e23a7f0756e46b"
+    },
+    "before": {
+      "path": "experiment-results/ga-tuning-2026-08-30/before-repeat.json",
+      "sha256": "1abe73eda6d2ef0350776eaea4312c1cfe1ec630b104a26f13dd7ac7c720f594"
+    }
+  },
+  "scenarios": [
+    {
+      "after": {
+        "feasible_runs": 5,
+        "median_evaluated_chromosomes": 3909,
+        "median_feasible_raw_penalty": 370,
+        "median_first_feasible_seconds": 0.014999999984866008,
+        "observations": [
+          {
+            "config_hash": "f06688b1f3bf42877ea472f32979f64c237196d88599ff783cf791e815bb07a0",
+            "evaluated_chromosomes": 3942,
+            "feasible": true,
+            "first_feasible_seconds": 0.014999999984866008,
+            "generations": 4,
+            "hard_violations": 0,
+            "implementation_version": "ga-v4",
+            "raw_penalty": 330,
+            "repair_second_move_evaluations": 0,
+            "repair_second_move_improvements": 0,
+            "seed": 5001,
+            "solver_runtime_seconds": 3.0,
+            "wall_seconds": 3.0135711999901105
+          },
+          {
+            "config_hash": "d19bd1560e611d6fa88bf812cc9261cf98d95b4c5054e5ee0657cf8203210ce4",
+            "evaluated_chromosomes": 3870,
+            "feasible": true,
+            "first_feasible_seconds": 0.01600000000325963,
+            "generations": 4,
+            "hard_violations": 0,
+            "implementation_version": "ga-v4",
+            "raw_penalty": 370,
+            "repair_second_move_evaluations": 0,
+            "repair_second_move_improvements": 0,
+            "seed": 5002,
+            "solver_runtime_seconds": 3.0,
+            "wall_seconds": 3.0022671000042465
+          },
+          {
+            "config_hash": "8d5d47ff8f7adfd7ebee54712020df1d4b28e5eb9325550f401db9a16c4f7771",
+            "evaluated_chromosomes": 3918,
+            "feasible": true,
+            "first_feasible_seconds": 0.0,
+            "generations": 4,
+            "hard_violations": 0,
+            "implementation_version": "ga-v4",
+            "raw_penalty": 401,
+            "repair_second_move_evaluations": 0,
+            "repair_second_move_improvements": 0,
+            "seed": 5003,
+            "solver_runtime_seconds": 3.0,
+            "wall_seconds": 3.0209998000063933
+          },
+          {
+            "config_hash": "8b92f7538f8f71f2990ee6055f840935d935ecc437f89cde48920acb11e23775",
+            "evaluated_chromosomes": 3843,
+            "feasible": true,
+            "first_feasible_seconds": 0.015000000013969839,
+            "generations": 4,
+            "hard_violations": 0,
+            "implementation_version": "ga-v4",
+            "raw_penalty": 384,
+            "repair_second_move_evaluations": 0,
+            "repair_second_move_improvements": 0,
+            "seed": 5004,
+            "solver_runtime_seconds": 3.0,
+            "wall_seconds": 2.9937631999782752
+          },
+          {
+            "config_hash": "7250558d3bb86d1afbfcd29a60d2de9911cdc542199e8d936b9cc61d94073448",
+            "evaluated_chromosomes": 3909,
+            "feasible": true,
+            "first_feasible_seconds": 0.0,
+            "generations": 4,
+            "hard_violations": 0,
+            "implementation_version": "ga-v4",
+            "raw_penalty": 352,
+            "repair_second_move_evaluations": 0,
+            "repair_second_move_improvements": 0,
+            "seed": 5005,
+            "solver_runtime_seconds": 3.0,
+            "wall_seconds": 3.0145451999851502
+          }
+        ],
+        "total_runs": 5
+      },
+      "before": {
+        "feasible_runs": 5,
+        "median_evaluated_chromosomes": 3991,
+        "median_feasible_raw_penalty": 382,
+        "median_first_feasible_seconds": 0.0,
+        "observations": [
+          {
+            "config_hash": "f06688b1f3bf42877ea472f32979f64c237196d88599ff783cf791e815bb07a0",
+            "evaluated_chromosomes": 3945,
+            "feasible": true,
+            "first_feasible_seconds": 0.0159999999741558,
+            "generations": 1,
+            "hard_violations": 0,
+            "implementation_version": "ga-v3",
+            "raw_penalty": 413,
+            "repair_second_move_evaluations": 0,
+            "repair_second_move_improvements": 0,
+            "seed": 5001,
+            "solver_runtime_seconds": 3.0,
+            "wall_seconds": 3.000750400009565
+          },
+          {
+            "config_hash": "d19bd1560e611d6fa88bf812cc9261cf98d95b4c5054e5ee0657cf8203210ce4",
+            "evaluated_chromosomes": 3987,
+            "feasible": true,
+            "first_feasible_seconds": 0.0,
+            "generations": 1,
+            "hard_violations": 0,
+            "implementation_version": "ga-v3",
+            "raw_penalty": 357,
+            "repair_second_move_evaluations": 0,
+            "repair_second_move_improvements": 0,
+            "seed": 5002,
+            "solver_runtime_seconds": 3.0,
+            "wall_seconds": 3.0215008999803104
+          },
+          {
+            "config_hash": "8d5d47ff8f7adfd7ebee54712020df1d4b28e5eb9325550f401db9a16c4f7771",
+            "evaluated_chromosomes": 4043,
+            "feasible": true,
+            "first_feasible_seconds": 0.0,
+            "generations": 1,
+            "hard_violations": 0,
+            "implementation_version": "ga-v3",
+            "raw_penalty": 356,
+            "repair_second_move_evaluations": 0,
+            "repair_second_move_improvements": 0,
+            "seed": 5003,
+            "solver_runtime_seconds": 3.0,
+            "wall_seconds": 3.0148669999907725
+          },
+          {
+            "config_hash": "8b92f7538f8f71f2990ee6055f840935d935ecc437f89cde48920acb11e23775",
+            "evaluated_chromosomes": 3991,
+            "feasible": true,
+            "first_feasible_seconds": 0.0,
+            "generations": 1,
+            "hard_violations": 0,
+            "implementation_version": "ga-v3",
+            "raw_penalty": 403,
+            "repair_second_move_evaluations": 0,
+            "repair_second_move_improvements": 0,
+            "seed": 5004,
+            "solver_runtime_seconds": 3.0,
+            "wall_seconds": 3.0065033999853767
+          },
+          {
+            "config_hash": "7250558d3bb86d1afbfcd29a60d2de9911cdc542199e8d936b9cc61d94073448",
+            "evaluated_chromosomes": 3998,
+            "feasible": true,
+            "first_feasible_seconds": 0.0,
+            "generations": 1,
+            "hard_violations": 0,
+            "implementation_version": "ga-v3",
+            "raw_penalty": 382,
+            "repair_second_move_evaluations": 0,
+            "repair_second_move_improvements": 0,
+            "seed": 5005,
+            "solver_runtime_seconds": 3.0,
+            "wall_seconds": 3.009550399990985
+          }
+        ],
+        "total_runs": 5
+      },
+      "candidate_count": 1500,
+      "event_count": 30,
+      "problem_hash": "e5485b65066c8428e5edf33a26806458b019e4e0928ab7967a0706888c57b3aa",
+      "scenario_id": "moderate_mixed",
+      "witness_feasible": true
+    },
+    {
+      "after": {
+        "feasible_runs": 0,
+        "median_evaluated_chromosomes": 2622,
+        "median_feasible_raw_penalty": null,
+        "median_first_feasible_seconds": null,
+        "observations": [
+          {
+            "config_hash": "f06688b1f3bf42877ea472f32979f64c237196d88599ff783cf791e815bb07a0",
+            "evaluated_chromosomes": 2572,
+            "feasible": false,
+            "first_feasible_seconds": null,
+            "generations": 1,
+            "hard_violations": 2,
+            "implementation_version": "ga-v4",
+            "raw_penalty": 596,
+            "repair_second_move_evaluations": 64,
+            "repair_second_move_improvements": 1,
+            "seed": 5001,
+            "solver_runtime_seconds": 3.0,
+            "wall_seconds": 3.0149519000260625
+          },
+          {
+            "config_hash": "d19bd1560e611d6fa88bf812cc9261cf98d95b4c5054e5ee0657cf8203210ce4",
+            "evaluated_chromosomes": 2632,
+            "feasible": false,
+            "first_feasible_seconds": null,
+            "generations": 1,
+            "hard_violations": 2,
+            "implementation_version": "ga-v4",
+            "raw_penalty": 569,
+            "repair_second_move_evaluations": 64,
+            "repair_second_move_improvements": 0,
+            "seed": 5002,
+            "solver_runtime_seconds": 3.0,
+            "wall_seconds": 3.0145075999898836
+          },
+          {
+            "config_hash": "8d5d47ff8f7adfd7ebee54712020df1d4b28e5eb9325550f401db9a16c4f7771",
+            "evaluated_chromosomes": 2691,
+            "feasible": false,
+            "first_feasible_seconds": null,
+            "generations": 1,
+            "hard_violations": 1,
+            "implementation_version": "ga-v4",
+            "raw_penalty": 575,
+            "repair_second_move_evaluations": 64,
+            "repair_second_move_improvements": 1,
+            "seed": 5003,
+            "solver_runtime_seconds": 3.0,
+            "wall_seconds": 3.0171351000026334
+          },
+          {
+            "config_hash": "8b92f7538f8f71f2990ee6055f840935d935ecc437f89cde48920acb11e23775",
+            "evaluated_chromosomes": 2272,
+            "feasible": false,
+            "first_feasible_seconds": null,
+            "generations": 1,
+            "hard_violations": 3,
+            "implementation_version": "ga-v4",
+            "raw_penalty": 570,
+            "repair_second_move_evaluations": 0,
+            "repair_second_move_improvements": 0,
+            "seed": 5004,
+            "solver_runtime_seconds": 3.0,
+            "wall_seconds": 3.0252617000078317
+          },
+          {
+            "config_hash": "7250558d3bb86d1afbfcd29a60d2de9911cdc542199e8d936b9cc61d94073448",
+            "evaluated_chromosomes": 2622,
+            "feasible": false,
+            "first_feasible_seconds": null,
+            "generations": 1,
+            "hard_violations": 2,
+            "implementation_version": "ga-v4",
+            "raw_penalty": 596,
+            "repair_second_move_evaluations": 64,
+            "repair_second_move_improvements": 1,
+            "seed": 5005,
+            "solver_runtime_seconds": 3.0,
+            "wall_seconds": 3.007242399995448
+          }
+        ],
+        "total_runs": 5
+      },
+      "before": {
+        "feasible_runs": 0,
+        "median_evaluated_chromosomes": 2583,
+        "median_feasible_raw_penalty": null,
+        "median_first_feasible_seconds": null,
+        "observations": [
+          {
+            "config_hash": "f06688b1f3bf42877ea472f32979f64c237196d88599ff783cf791e815bb07a0",
+            "evaluated_chromosomes": 2583,
+            "feasible": false,
+            "first_feasible_seconds": null,
+            "generations": 1,
+            "hard_violations": 2,
+            "implementation_version": "ga-v3",
+            "raw_penalty": 596,
+            "repair_second_move_evaluations": 0,
+            "repair_second_move_improvements": 0,
+            "seed": 5001,
+            "solver_runtime_seconds": 3.0,
+            "wall_seconds": 3.0002962999860756
+          },
+          {
+            "config_hash": "d19bd1560e611d6fa88bf812cc9261cf98d95b4c5054e5ee0657cf8203210ce4",
+            "evaluated_chromosomes": 2619,
+            "feasible": false,
+            "first_feasible_seconds": null,
+            "generations": 1,
+            "hard_violations": 2,
+            "implementation_version": "ga-v3",
+            "raw_penalty": 569,
+            "repair_second_move_evaluations": 0,
+            "repair_second_move_improvements": 0,
+            "seed": 5002,
+            "solver_runtime_seconds": 3.0,
+            "wall_seconds": 3.005103200004669
+          },
+          {
+            "config_hash": "8d5d47ff8f7adfd7ebee54712020df1d4b28e5eb9325550f401db9a16c4f7771",
+            "evaluated_chromosomes": 2606,
+            "feasible": false,
+            "first_feasible_seconds": null,
+            "generations": 1,
+            "hard_violations": 1,
+            "implementation_version": "ga-v3",
+            "raw_penalty": 575,
+            "repair_second_move_evaluations": 0,
+            "repair_second_move_improvements": 0,
+            "seed": 5003,
+            "solver_runtime_seconds": 3.0,
+            "wall_seconds": 3.0147895999834873
+          },
+          {
+            "config_hash": "8b92f7538f8f71f2990ee6055f840935d935ecc437f89cde48920acb11e23775",
+            "evaluated_chromosomes": 2543,
+            "feasible": false,
+            "first_feasible_seconds": null,
+            "generations": 1,
+            "hard_violations": 3,
+            "implementation_version": "ga-v3",
+            "raw_penalty": 570,
+            "repair_second_move_evaluations": 0,
+            "repair_second_move_improvements": 0,
+            "seed": 5004,
+            "solver_runtime_seconds": 3.0,
+            "wall_seconds": 3.0390651999914553
+          },
+          {
+            "config_hash": "7250558d3bb86d1afbfcd29a60d2de9911cdc542199e8d936b9cc61d94073448",
+            "evaluated_chromosomes": 2468,
+            "feasible": false,
+            "first_feasible_seconds": null,
+            "generations": 1,
+            "hard_violations": 2,
+            "implementation_version": "ga-v3",
+            "raw_penalty": 531,
+            "repair_second_move_evaluations": 0,
+            "repair_second_move_improvements": 0,
+            "seed": 5005,
+            "solver_runtime_seconds": 3.0,
+            "wall_seconds": 3.015182199975243
+          }
+        ],
+        "total_runs": 5
+      },
+      "candidate_count": 2400,
+      "event_count": 48,
+      "problem_hash": "7794936627683c113b50925d68e8a3249577d1417e3300feb8382d43b03057f1",
+      "scenario_id": "tight_contention",
+      "witness_feasible": true
+    },
+    {
+      "after": {
+        "feasible_runs": 5,
+        "median_evaluated_chromosomes": 2150,
+        "median_feasible_raw_penalty": 37,
+        "median_first_feasible_seconds": 0.014999999984866008,
+        "observations": [
+          {
+            "config_hash": "f06688b1f3bf42877ea472f32979f64c237196d88599ff783cf791e815bb07a0",
+            "evaluated_chromosomes": 2150,
+            "feasible": true,
+            "first_feasible_seconds": 0.014999999984866008,
+            "generations": 1,
+            "hard_violations": 0,
+            "implementation_version": "ga-v4",
+            "raw_penalty": 37,
+            "repair_second_move_evaluations": 31,
+            "repair_second_move_improvements": 5,
+            "seed": 5001,
+            "solver_runtime_seconds": 3.0,
+            "wall_seconds": 3.0291572000132874
+          },
+          {
+            "config_hash": "d19bd1560e611d6fa88bf812cc9261cf98d95b4c5054e5ee0657cf8203210ce4",
+            "evaluated_chromosomes": 2195,
+            "feasible": true,
+            "first_feasible_seconds": 0.0159999999741558,
+            "generations": 1,
+            "hard_violations": 0,
+            "implementation_version": "ga-v4",
+            "raw_penalty": 35,
+            "repair_second_move_evaluations": 48,
+            "repair_second_move_improvements": 6,
+            "seed": 5002,
+            "solver_runtime_seconds": 3.0,
+            "wall_seconds": 3.0566997000132687
+          },
+          {
+            "config_hash": "8d5d47ff8f7adfd7ebee54712020df1d4b28e5eb9325550f401db9a16c4f7771",
+            "evaluated_chromosomes": 2148,
+            "feasible": true,
+            "first_feasible_seconds": 0.01600000000325963,
+            "generations": 1,
+            "hard_violations": 0,
+            "implementation_version": "ga-v4",
+            "raw_penalty": 37,
+            "repair_second_move_evaluations": 64,
+            "repair_second_move_improvements": 0,
+            "seed": 5003,
+            "solver_runtime_seconds": 3.0,
+            "wall_seconds": 3.015772399987327
+          },
+          {
+            "config_hash": "8b92f7538f8f71f2990ee6055f840935d935ecc437f89cde48920acb11e23775",
+            "evaluated_chromosomes": 2156,
+            "feasible": true,
+            "first_feasible_seconds": 0.0,
+            "generations": 1,
+            "hard_violations": 0,
+            "implementation_version": "ga-v4",
+            "raw_penalty": 33,
+            "repair_second_move_evaluations": 64,
+            "repair_second_move_improvements": 1,
+            "seed": 5004,
+            "solver_runtime_seconds": 3.0,
+            "wall_seconds": 3.0368259000242688
+          },
+          {
+            "config_hash": "7250558d3bb86d1afbfcd29a60d2de9911cdc542199e8d936b9cc61d94073448",
+            "evaluated_chromosomes": 2150,
+            "feasible": true,
+            "first_feasible_seconds": 0.0,
+            "generations": 1,
+            "hard_violations": 0,
+            "implementation_version": "ga-v4",
+            "raw_penalty": 38,
+            "repair_second_move_evaluations": 50,
+            "repair_second_move_improvements": 4,
+            "seed": 5005,
+            "solver_runtime_seconds": 3.0,
+            "wall_seconds": 3.029124699998647
+          }
+        ],
+        "total_runs": 5
+      },
+      "before": {
+        "feasible_runs": 5,
+        "median_evaluated_chromosomes": 2138,
+        "median_feasible_raw_penalty": 41,
+        "median_first_feasible_seconds": 0.6410000000032596,
+        "observations": [
+          {
+            "config_hash": "f06688b1f3bf42877ea472f32979f64c237196d88599ff783cf791e815bb07a0",
+            "evaluated_chromosomes": 2170,
+            "feasible": true,
+            "first_feasible_seconds": 0.6089999999967404,
+            "generations": 1,
+            "hard_violations": 0,
+            "implementation_version": "ga-v3",
+            "raw_penalty": 49,
+            "repair_second_move_evaluations": 0,
+            "repair_second_move_improvements": 0,
+            "seed": 5001,
+            "solver_runtime_seconds": 3.0,
+            "wall_seconds": 3.026489500014577
+          },
+          {
+            "config_hash": "d19bd1560e611d6fa88bf812cc9261cf98d95b4c5054e5ee0657cf8203210ce4",
+            "evaluated_chromosomes": 2138,
+            "feasible": true,
+            "first_feasible_seconds": 1.062000000005355,
+            "generations": 1,
+            "hard_violations": 0,
+            "implementation_version": "ga-v3",
+            "raw_penalty": 37,
+            "repair_second_move_evaluations": 0,
+            "repair_second_move_improvements": 0,
+            "seed": 5002,
+            "solver_runtime_seconds": 3.0,
+            "wall_seconds": 3.0299561000138056
+          },
+          {
+            "config_hash": "8d5d47ff8f7adfd7ebee54712020df1d4b28e5eb9325550f401db9a16c4f7771",
+            "evaluated_chromosomes": 2055,
+            "feasible": true,
+            "first_feasible_seconds": 1.0780000000086147,
+            "generations": 1,
+            "hard_violations": 0,
+            "implementation_version": "ga-v3",
+            "raw_penalty": 46,
+            "repair_second_move_evaluations": 0,
+            "repair_second_move_improvements": 0,
+            "seed": 5003,
+            "solver_runtime_seconds": 3.0,
+            "wall_seconds": 3.02828200001386
+          },
+          {
+            "config_hash": "8b92f7538f8f71f2990ee6055f840935d935ecc437f89cde48920acb11e23775",
+            "evaluated_chromosomes": 2101,
+            "feasible": true,
+            "first_feasible_seconds": 0.5789999999979045,
+            "generations": 1,
+            "hard_violations": 0,
+            "implementation_version": "ga-v3",
+            "raw_penalty": 37,
+            "repair_second_move_evaluations": 0,
+            "repair_second_move_improvements": 0,
+            "seed": 5004,
+            "solver_runtime_seconds": 3.0,
+            "wall_seconds": 3.0231369999819435
+          },
+          {
+            "config_hash": "7250558d3bb86d1afbfcd29a60d2de9911cdc542199e8d936b9cc61d94073448",
+            "evaluated_chromosomes": 2182,
+            "feasible": true,
+            "first_feasible_seconds": 0.6410000000032596,
+            "generations": 1,
+            "hard_violations": 0,
+            "implementation_version": "ga-v3",
+            "raw_penalty": 41,
+            "repair_second_move_evaluations": 0,
+            "repair_second_move_improvements": 0,
+            "seed": 5005,
+            "solver_runtime_seconds": 3.0,
+            "wall_seconds": 3.0341125999984797
+          }
+        ],
+        "total_runs": 5
+      },
+      "candidate_count": 3000,
+      "event_count": 40,
+      "problem_hash": "949a0793020c8a0883dfde1991f4b3001d5682b39ca3c8f56c5c303521cc0fc4",
+      "scenario_id": "daily_limit_stress",
+      "witness_feasible": true
+    }
+  ],
+  "source_sha256": {
+    "after": "269b781b6d8af4190e12891f0abd755486209050a994e471ba0e78a47793b162",
+    "before": "7af3bbe7c1ba594263c0fe783f2d839cdc6c89a330370ee82aa59523ddbd6005"
+  },
+  "supporting_source_sha256": {
+    "scheduler/domain/contracts.py": "e167399638c14e72c74ee5c4b94244e07ca27da01be69c32f33918d553741348",
+    "scheduler/domain/hashing.py": "736cda68c7673a19a8b10dcd0bc6ff6e5d765aa740323476ed17a8953143bb31",
+    "scheduler/domain/scoring.py": "89b0e3f28fe54b1ef4084f9ad95cb69bbed2740c1ae35584430dee635abaefff",
+    "scheduler/domain/validation.py": "193d8bf6d985690a335e3d30440f1e2aaec15d62eef2ab06b2dd48396e4b6de0",
+    "scheduler/solvers/tracing.py": "d0bf65bd87a0e23ac7fadbfc4e92e66f640cd59401afd0a5b8e771ed03282622"
+  }
+}

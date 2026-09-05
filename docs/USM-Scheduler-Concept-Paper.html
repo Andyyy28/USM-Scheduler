@@ -40,7 +40,7 @@ html:not([data-portable-source-tooltips-ready]) .portable-chart-summary>.portabl
 <blockquote><strong>Research and institutional disclaimer.</strong> This is a BS Computer Science thesis prototype and research proposal, not an official USM scheduling policy or deployed university system. The scheduling rules described as “USM requirements” originate from the project brief and must be validated and signed off by authorized USM scheduling personnel. Public USM sources are used only for institutional context. No real institutional dataset may be collected, imported, analyzed, or published without the required university authorization, privacy review, and de-identification controls.</blockquote></section></div>
 <div class="portable-block portable-layout-full" data-artifact-block-id="abstract" data-artifact-block-type="markdown" data-layout="full"><section class="portable-markdown"><h2>Abstract</h2>
 <p>University class timetabling requires many interdependent decisions involving active sections, fixed instructors, meeting durations, rooms, laboratories, time periods, availability, and academic-unit rules. A locally acceptable placement can make another meeting impossible because the same instructor, section, or room cannot be used twice at the same time. This study proposes a university scheduling decision-support system for one authorized semester at the University of Southern Mindanao (USM) Kabacan Main Campus. It formalizes stakeholder-provided rules, including explicit college- or offering-unit room authorization, and compares two contrasting optimization approaches: Constraint Programming–SAT (CP-SAT) and a custom Genetic Algorithm (GA).</p>
-<p>Both engines will receive the same immutable problem snapshot, legal candidate placements, hard constraints, soft-objective profile, computational budget, and independent validation procedure. Evaluation will prioritize independently verified feasibility, followed by common schedule-quality penalty, time to first feasible solution, success rate, and consistency across repeated runs. The system will preserve human control through college review, locked assignments, child-version regeneration, and central approval. The main contribution is the formal USM constraint model, exact-versus-metaheuristic comparison, algorithm-independent correctness checking, and reproducible experiment—not the administrative data-entry interface. Conclusions will be limited to the authorized campus, term, instances, objective weights, implementation, hardware, and time budget actually tested.</p></section></div>
+<p>Both engines will receive the same immutable problem snapshot, legal candidate placements, hard constraints, soft-objective profile, computational budget, and independent validation procedure. Evaluation will use three prespecified primary outcomes: independently verified feasible-generation rate, common raw schedule-quality penalty among feasible results, and censor-aware time to feasibility. The system will preserve human control through college review, locked assignments, child-version regeneration, and central approval. The main contribution is the formal USM constraint model, exact-versus-metaheuristic comparison, algorithm-independent correctness checking, and reproducible experiment—not the administrative data-entry interface. Conclusions will be limited to the authorized campus, term, instances, objective weights, implementation, hardware, and time budget actually tested.</p></section></div>
 <div class="portable-block portable-layout-full" data-artifact-block-id="statement-of-the-problem" data-artifact-block-type="markdown" data-layout="full"><section class="portable-markdown"><h2>Statement of the Problem</h2>
 <p>The University of Southern Mindanao describes its main campus as being located in Kabacan, Cotabato, and its public mission includes instruction and research in support of Southern Philippines (<a href="https://www.usm.edu.ph/about-usm/" rel="noreferrer">USM About</a>; <a href="https://www.usm.edu.ph/about-usm/location-map/" rel="noreferrer">USM location</a>; <a href="https://www.usm.edu.ph/about-usm/mandates-vision-mission/" rel="noreferrer">USM mandates, vision, and mission</a>). Those public facts establish institutional context but do not establish the university’s internal scheduling rules.</p>
 <p>For this study, the operational problem is defined by the stakeholder-supplied thesis requirements. The input consists of predeclared course offerings, active sections, fixed instructor assignments and teaching loads, required meeting occurrences and durations, time atoms, rooms and laboratories, availability profiles, room capabilities, curriculum-specific subject classifications, offering-unit policies, and existing assignments that have been explicitly locked. The optimizer decides only the time and room for each required meeting.</p>
@@ -66,10 +66,10 @@ html:not([data-portable-source-tooltips-ready]) .portable-chart-summary>.portabl
 <p>The study does not claim that the prototype replaces the scheduling office, guarantees a feasible schedule for every input, or establishes universal superiority of one algorithm.</p></section></div>
 <div class="portable-block portable-layout-full" data-artifact-block-id="scope-and-delimitations" data-artifact-block-type="markdown" data-layout="full"><section class="portable-markdown"><h2>Scope and Delimitations</h2>
 <p>The baseline study covers:</p>
-<ul><li>one USM campus: Kabacan Main Campus;</li><li>one complete authorized, de-identified real semester, subject to institutional permission and data availability;</li><li>deterministic 25%, 50%, 75%, and 100% nested demand instances derived from that term;</li><li>active incoming, continuing, and graduating sections represented for the selected term;</li><li>fixed subjects, instructors, teaching loads, meeting occurrences, and durations;</li><li>section-level conflicts, including shared offerings attached to every affected section;</li><li>configurable 30-minute time atoms;</li><li>classrooms, laboratories, room capabilities, explicit room authorization, availability, and locks;</li><li>CP-SAT and one transparent custom GA; and</li><li>administrative review, timetable versioning, approval, and export.</li></ul>
+<ul><li>one USM campus: Kabacan Main Campus;</li><li>one complete authorized, de-identified real semester, subject to institutional permission and data availability;</li><li>deterministic 25%, 50%, 75%, and 100% nested demand instances derived from that term;</li><li>active incoming, continuing, and graduating sections represented for the selected term;</li><li>fixed subjects, instructors, teaching loads, meeting occurrences, and durations;</li><li>section-level conflicts, including shared offerings attached to every affected section;</li><li>expected enrollment from 1 through 50 for every section and a fixed maximum of 50 students across the unique sections attached to any meeting;</li><li>configurable 30-minute time atoms;</li><li>classrooms, laboratories, room capabilities, explicit room authorization, availability, and locks;</li><li>CP-SAT and one transparent custom GA; and</li><li>administrative review, timetable versioning, approval, and export.</li></ul>
 <p>The study excludes:</p>
-<ul><li>instructor assignment and teaching-load construction;</li><li>room seating capacity or chair counting;</li><li>individual student elective and cross-enrollment conflict optimization;</li><li>examination timetabling;</li><li>campus walking distance and multi-campus travel;</li><li>real-time enrollment;</li><li>automated policy relaxation;</li><li>a hybrid CP-SAT/GA algorithm; and</li><li>an AI chatbot as the scheduling solution.</li></ul>
-<p>Student records are optional, pseudonymous administrative data and do not enter the solver or scorer. Participating rooms must be administratively prevalidated as suitable because capacity optimization is excluded.</p>
+<ul><li>instructor assignment and teaching-load construction;</li><li>variable room seating capacity, chair counting, and floor-space optimization;</li><li>individual student elective and cross-enrollment conflict optimization;</li><li>examination timetabling;</li><li>campus walking distance and multi-campus travel;</li><li>real-time enrollment;</li><li>automated policy relaxation;</li><li>a hybrid CP-SAT/GA algorithm; and</li><li>an AI chatbot as the scheduling solution.</li></ul>
+<p>Student records are optional, pseudonymous administrative data and do not enter the solver or scorer. The frozen section headcount is sufficient. The fixed 50-student limit applies uniformly to classrooms, laboratories, and special-purpose rooms; exactly 50 is valid and 51 or more blocks snapshot creation. It is an academic scheduling rule, not a variable physical-capacity model. Participating rooms must be administratively prevalidated as suitable.</p>
 <p>If USM authorization, a complete term dataset, or approved room-policy definitions are unavailable, the output must be reframed as a synthetic-data prototype evaluation. It must not be presented as evidence of real USM operational performance.</p></section></div>
 <div class="portable-block portable-layout-full" data-artifact-block-id="conceptual-framework" data-artifact-block-type="markdown" data-layout="full"><section class="portable-markdown"><h2>Conceptual Framework</h2>
 <pre><code>INPUT
@@ -107,14 +107,14 @@ College review → locks/change requests → regeneration → central approval</
 <h3>Research setting and data</h3>
 <p>The primary case will be one authorized semester from USM Kabacan Main Campus. The dataset should include all participating colleges within the approved study coverage. The final manuscript will disclose the actual term, colleges represented, counts of offerings, meetings, sections, instructors, rooms by kind, time atoms, candidate placements, and locks.</p>
 <p>The source data will be previewed through a versioned XLSX schema. Invalid rows, missing references, duplicates, incomplete availability, invalid duration patterns, unauthorized room rules, and conflicting locks will block transactional commit. A clean revision will be serialized and hashed before solving.</p>
-<p>Synthetic data will be used for development, constraint tests, infeasibility tests, stress cases, and GA pilot tuning. Synthetic results will not be mixed with claims about actual USM performance.</p>
+<p>Synthetic data will be used for development, constraint tests, infeasibility tests, stress cases, and equal-budget CP-SAT/GA pilot tuning. Synthetic results will not be mixed with claims about actual USM performance.</p>
 <h3>Common problem representation</h3>
 <p>Each weekly <code>MeetingRequirement</code> becomes one <code>MeetingEvent</code>. Preprocessing produces the same legal placement list for both engines:</p>
 <pre><code>candidate[event] = (room, start_atom, occupied_atoms)</code></pre>
 <p>Candidates that violate a local hard rule are removed before search. Candidate legality covers campus, active atoms, contiguous duration, day and break boundaries, room and instructor availability, required room capability, room authorization, and active lock placement. An event with no candidate is a shared preflight failure, not a loss assigned to either algorithm.</p>
 <h3>Hard constraints</h3>
 <p>Every returned schedule must satisfy all of the following:</p>
-<ol><li>Every required meeting is assigned exactly once.</li><li>An instructor cannot teach overlapping meetings.</li><li>A section cannot attend overlapping meetings.</li><li>A room cannot contain overlapping meetings.</li><li>Instructor and room unavailability is respected.</li><li>A multi-atom meeting is contiguous and cannot cross a break or day boundary.</li><li>Laboratory or specialized meetings use rooms with all required capabilities.</li><li>Major offerings use rooms explicitly authorized for the applicable college or department.</li><li>Minor and GE offerings follow the approved offering-unit authorization rules.</li><li>Repeated sessions in a distinct-day group use different days.</li><li>Every active locked assignment is preserved exactly.</li></ol>
+<ol><li>Every required meeting is assigned exactly once.</li><li>An instructor cannot teach overlapping meetings.</li><li>A section cannot attend overlapping meetings.</li><li>A room cannot contain overlapping meetings.</li><li>Instructor and room unavailability is respected.</li><li>A multi-atom meeting is contiguous and cannot cross a break or day boundary.</li><li>Laboratory or specialized meetings use rooms with all required capabilities.</li><li>Major offerings use rooms explicitly authorized for the applicable college or department.</li><li>Minor and GE offerings follow the approved offering-unit authorization rules.</li><li>Repeated sessions in a distinct-day group use different days.</li><li>Every active locked assignment is preserved exactly.</li><li>Every section and every combined meeting has at most 50 students.</li><li>Approved recurring teaching blocks are respected at their declared scope.</li><li>Every instructor remains within the approved maximum daily teaching load, or has an approved explicit no-limit acknowledgement.</li></ol>
 <p>An independent validator will recheck both common candidate membership and the raw evidence behind availability, duration, capabilities, room kind, authorizations, locks, and resource conflicts.</p>
 <h3>Soft objectives</h3>
 <p>Feasibility always takes priority. The default shared soft components are:</p>
@@ -131,19 +131,21 @@ College review → locks/change requests → regeneration → central approval</
 <p>Fitness is lexicographic:</p>
 <pre><code>(independent hard-violation count, common soft penalty)</code></pre>
 <p>Any candidate with fewer hard violations outranks one with a better soft score. No arbitrary large hard-penalty constant is used. The GA may find a feasible schedule but cannot prove optimality or infeasibility.</p>
-<p>Before real-data testing, one GA configuration will be selected using synthetic-only seeds <code>2001–2010</code> over a fixed 24-configuration grid: populations 100/200/400, tournament sizes 3/5, crossover rates 0.80/0.90, and mutation rates <code>1/N</code> or <code>2/N</code>. Selection priority is feasibility rate, median feasible penalty, then median time. The selected configuration will be frozen before real-data outcomes are inspected.</p>
+<p>Before real-data testing, both engines receive the same 30-minute maximum synthetic tuning budget: six configurations × seeds <code>2001–2005</code> × 60 seconds. The CP-SAT grid is presolve on/off × linearization level <code>0/1/2</code>. The GA grid is population 100/200/400 × mutation <code>1/N</code> or <code>2/N</code>, while tournament size 3, crossover 0.90, elite fraction 0.05, and 20 repair attempts remain fixed. Selection priority is feasibility rate, median feasible raw penalty, RMST to feasibility, then configuration hash. Both profiles are frozen before authorized term outcomes are inspected, and objective weights are never tuned to favor an engine. All 30 runs per algorithm (60 total) in this pilot are exploratory and excluded from formal denominators and inference.</p>
 <h3>Controlled experiment</h3>
 <p>The primary full instance will contain all active authorized offerings in the selected term. Nested 25%, 50%, and 75% instances will be selected deterministically within college/classification strata, with the 100% instance retained as the primary case. Referenced instructors, sections, authorizations, capabilities, availability, and locks will remain consistent.</p>
-<p>For every known-feasible instance:</p>
-<ul><li>run one unmeasured warm-up per engine;</li><li>run CP-SAT and GA with seeds <code>1001–1030</code>;</li><li>use a 300-second wall-clock limit per trial;</li><li>allocate one logical CPU/worker and identical memory conditions;</li><li>execute algorithms sequentially, never concurrently;</li><li>randomize algorithm order within seed blocks using a recorded order seed;</li><li>measure shared preprocessing separately;</li><li>include algorithm-specific construction in the 300-second budget; and</li><li>preserve all timeouts, no-solution outcomes, and failures.</li></ul>
-<p>The same numeric seed is a reproducibility control, not a statistically paired observation, because the algorithms transform randomness differently.</p>
+<p>For each frozen scale instance:</p>
+<ul><li>run one unmeasured warm-up per engine;</li><li>run CP-SAT and GA with seeds <code>1001–1030</code>;</li><li>use a 300-second wall-clock limit per trial;</li><li>allocate one CPU, one solver worker, and 2048 MB of memory per fresh-process run;</li><li>execute algorithms sequentially, never concurrently;</li><li>randomize algorithm order within seed blocks using order seed <code>20260824</code>;</li><li>measure shared preprocessing separately;</li><li>include algorithm-specific construction in the 300-second budget; and</li><li>preserve all timeouts, no-solution outcomes, and failures.</li></ul>
+<p>The formal matrix contains 240 measured runs across the 25%, 50%, 75%, and 100% instances, plus eight persisted but excluded warm-ups, four excluded 1,800-second CP-SAT feasibility diagnostics, and eight excluded trace runs using seed <code>9001</code>. All other configurable, synthetic, pilot, and diagnostic batches are permanently labelled exploratory and cannot produce the thesis winner.</p>
+<p>The preregistered comparison preserves each scale-and-seed CP-SAT/GA block as a deterministic pair. This blocking controls the frozen problem instance and run order; it does not assume that the two algorithms transform a numeric seed into equivalent random behavior.</p>
 <h3>Measures</h3>
-<p>| Measure | Operational definition | |---|---| | Hard violations | Independent vector by type; a collision counts one unique conflicting event pair per resource | | Feasible generation | Complete assignment with zero hard violations | | Success rate | Feasible measured trials divided by all non-infrastructure trials, with 95% Wilson interval | | Time to feasibility | Monotonic time to the first independently valid incumbent; unsuccessful trials censored at 300 seconds | | Execution time | Monotonic solver-boundary time, excluding queue/UI delay and shared preprocessing | | Schedule quality | Common raw weighted penalty, per-meeting penalty, component breakdown, and secondary normalized score | | Consistency | Pairwise normalized placement Hamming distance plus quality/time dispersion | | Room utilization | Occupied usable room-time atoms divided by available usable room-time atoms; descriptive, not a capacity measure | | CP-SAT certificate | Best bound, gap, and whether feasibility, optimality, or infeasibility was proven |</p>
+<p>| Measure | Operational definition | |---|---| | Hard violations | Independent vector by type; a collision counts one unique conflicting event pair per resource | | Feasible generation | Complete assignment with zero hard violations | | Feasible-generation rate | Feasible measured trials divided by all eligible trials, with counts and 95% Wilson interval | | Time to feasibility | Monotonic time to the first independently valid incumbent; unsuccessful trials censored at 300 seconds | | Execution time | Monotonic solver-boundary time, excluding queue/UI delay and shared preprocessing | | Schedule quality | Common raw weighted penalty, per-meeting penalty, component breakdown, and secondary normalized score | | Consistency | Pairwise normalized placement Hamming distance plus quality/time dispersion | | Room-time utilization | Occupied usable room-time atoms divided by available usable room-time atoms; descriptive and unrelated to chairs, floor area, or physical capacity | | CP-SAT certificate | Best bound, gap, and whether feasibility, optimality, or infeasibility was proven |</p>
 <h3>Statistical analysis and decision rule</h3>
-<p>Results will report exact sample sizes, medians, interquartile ranges, median absolute deviations, Wilson intervals, bootstrap confidence intervals, label-permutation or preregistered unpaired tests, Vargha–Delaney effect sizes for feasible quality, and Holm correction for the prespecified outcomes. Time to feasibility will use a censor-aware restricted mean through 300 seconds.</p>
-<p>Engine suitability will be decided lexicographically:</p>
-<ol><li>independently validated feasibility and feasible-generation rate;</li><li>common feasible-schedule quality;</li><li>time to first feasible schedule; and</li><li>consistency and operational behavior.</li></ol>
+<p>Results will report exact sample sizes, medians, interquartile ranges, median absolute deviations, Wilson intervals, deterministic bootstrap confidence intervals, Vargha–Delaney effect sizes for feasible quality, and Holm correction across the three primary outcomes within each scale. The preregistered feasibility comparison uses a two-sided exact paired binary test across complete seed blocks. Time to feasibility uses a censor-aware restricted mean through 300 seconds, a deterministic within-seed swap permutation, and a paired bootstrap interval for the RMST difference. Because schedule quality is defined only among independently feasible outputs, its comparison uses the declared deterministic two-sided label-permutation test of medians rather than discarding unmatched feasible schedules.</p>
+<p>A preferred engine may be declared only for the complete, protocol-valid 100% instance. The decision order is:</p>
+<ol><li>independently validated feasibility and feasible-generation rate;</li><li>common feasible-schedule quality; and</li><li>censor-aware time to feasibility.</li></ol>
 <p>The practical thresholds are a five-percentage-point feasibility difference, a 5% median raw-penalty improvement, and a 10% reduction in restricted mean time to feasibility, subject to the prespecified statistical conditions. If neither engine meets the rule, the conclusion will state that no overall advantage was demonstrated and will report the trade-offs rather than force a winner.</p>
+<p>Consistency and operational behavior remain secondary descriptive evidence. Incomplete, exploratory, invalid, cancelled, or unclassified studies must show “No formal conclusion available.”</p>
 <h3>Software and user validation</h3>
 <p>The implementation will undergo:</p>
 <ul><li>positive and negative unit fixtures for every hard rule;</li><li>property-based conflict tests;</li><li>known-feasible and known-infeasible solver cases;</li><li>equality checks between solver objective encoding and independent rescoring;</li><li>import, permission, state-transition, and immutability tests;</li><li>full import-to-export workflow tests;</li><li>browser-based critical-path tests; and</li><li>task-based usability evaluation with authorized scheduling personnel, subject to approval.</li></ul>
@@ -167,7 +169,7 @@ ORDER BY instance_scale_percent</code></pre></div></div><div class="portable-tab
 <div class="portable-block portable-layout-full" data-artifact-block-id="development-plan" data-artifact-block-type="markdown" data-layout="full"><section class="portable-markdown"><h2>Development Plan</h2>
 <p>| Phase | Principal work | Exit evidence | |---|---|---| | 1. Requirements | Constraint catalogue, authorization matrix, privacy plan, objectives | Stakeholder/adviser sign-off | | 2. Data and platform | Database, roles, imports, audit, deployment | Sample term imported transactionally | | 3. Shared model | Candidate builder, snapshots, validator, scorer, locks | Every hard rule has positive/negative tests | | 4. CP-SAT | Variables, constraints, objective, statuses, diagnostics | Known cases independently validated | | 5. GA | Operators, repair, reproducibility, synthetic tuning | Frozen configuration and repeatable seeds | | 6. Evaluation | Controlled batches, statistics, sensitivity, reports | Every comparison traces to matching hashes | | 7. Final validation | UAT, accessibility, recovery, documentation, defense artifacts | Tested release and approved non-sensitive evidence |</p></section></div>
 <div class="portable-block portable-layout-full" data-artifact-block-id="limitations-and-threats-to-validity" data-artifact-block-type="markdown" data-layout="full"><section class="portable-markdown"><h2>Limitations and Threats to Validity</h2>
-<ul><li><strong>One-term external validity:</strong> findings are a USM one-term case study, not a universal algorithm ranking.</li><li><strong>Institutional-data quality:</strong> missing or incorrect authorization and availability can make the encoded model misleading.</li><li><strong>Objective subjectivity:</strong> soft weights are normative and require preapproval plus sensitivity analysis.</li><li><strong>GA configuration sensitivity:</strong> tuning uses separate synthetic data and frozen settings.</li><li><strong>Different guarantees:</strong> CP-SAT may prove optimality or infeasibility; GA cannot. The report must preserve this distinction.</li><li><strong>Hardware and software effects:</strong> results apply to the recorded build, machine, worker count, and deadline.</li><li><strong>Section aggregation:</strong> individual elective conflicts are not represented.</li><li><strong>Capacity exclusion:</strong> room-time utilization is not seat utilization or proof of seating adequacy.</li><li><strong>Prototype governance:</strong> the interface and logo do not imply official adoption.</li></ul></section></div>
+<ul><li><strong>One-term external validity:</strong> findings are a USM one-term case study, not a universal algorithm ranking.</li><li><strong>Institutional-data quality:</strong> missing or incorrect authorization and availability can make the encoded model misleading.</li><li><strong>Objective subjectivity:</strong> soft weights are normative and require preapproval plus sensitivity analysis.</li><li><strong>GA configuration sensitivity:</strong> tuning uses separate synthetic data and frozen settings.</li><li><strong>Different guarantees:</strong> CP-SAT may prove optimality or infeasibility; GA cannot. The report must preserve this distinction.</li><li><strong>Hardware and software effects:</strong> results apply to the recorded build, machine, worker count, and deadline.</li><li><strong>Section aggregation:</strong> individual elective conflicts are not represented.</li><li><strong>Physical-capacity exclusion:</strong> the fixed 50-student rule is not chair, floor-area, or variable room-capacity validation; room-time utilization is not seat utilization or proof of physical suitability.</li><li><strong>Prototype governance:</strong> the interface and logo do not imply official adoption.</li></ul></section></div>
 <div class="portable-block portable-layout-full" data-artifact-block-id="references-and-official-context-sources" data-artifact-block-type="markdown" data-layout="full"><section class="portable-markdown"><h2>References and Official Context Sources</h2>
 <p>Google. (n.d.). <em>Constraint optimization</em>. <a href="https://developers.google.com/optimization/cp" rel="noreferrer">https://developers.google.com/optimization/cp</a></p>
 <p>Google. (n.d.). <em>CP-SAT solver</em>. <a href="https://developers.google.com/optimization/cp/cp_solver" rel="noreferrer">https://developers.google.com/optimization/cp/cp_solver</a></p>
@@ -527,218 +529,234 @@ ORDER BY instance_scale_percent</code></pre></details></li><li><strong>Universit
 })();</script>
 <div id="data-analytics-portable-reader" aria-hidden="true" inert></div>
 <template id="data-analytics-portable-artifact-payload-source" data-compression="gzip-base64">
-H4sIAAAAAAACCu19bXMcN7beX0HNllOS0j18kWXZVN1sjSlaYlYSuaLkvRvTJWK6MTNYdQNtAE1q
-vHKVP90fEN8vqUr+nH5Jcl6ARg+HorSbVCoVu+ruFcluNBo4OOc5z3npv0/s28lBcL0qJle6Xqrw
-Jqw7NTmYSBf0QlZhUkx87xaygl861VkHv2ql0Qvlw+Tg75NL5by2ZnKwt/XSoEMDv5iJQ9t20smg
-L5U4upRNL4O2RtiFODwtz2avhDS1eKKMCroSs2ZpnQ6rViysE6+NxseEtXilWxXkvNFmiTcc2qZR
-S1V+a3tTS7cuZ1fSKfHS2lbMvNdL0yoThAwirFQ+kF2IM9uHlXJGPNemlkbaSTGpla+c7gK+0uTo
-UtfKVKqcw/CqFt+e4Xv0QTlxVmn4GwzstReVNZXqguhkpxxOW4o/ybmspBHPpTbiULZd74WvVqru
-8QVqVWlYvNL3HayX6JwNFrZgOikmS2WUk0HVszA5mOzv7n9V7n5d7n/5au/Lg939g/3702++2f/6
-wcP/Mikm88ZWb/3k4Ie/T3Q9OaBlL6WpS6e8kq5alb5vW+nWsCe0x610b2t7ZeB2W68nB5M/iP8n
-tuncnJt7906d6qRTtZivD+7dEy/7+Vr8ZyWN+HYqzmxjW2vw0Uf1Urraiidy7rRqxLOpOJVVo+fS
-xYHs0skWBvlWVivVWIeP5e2FndvYcrrvLPT1WngVgjZLuPuWaRfbxAEGemyrHl8fNgYGOiRRKkmU
-rqx7i9Li5CLAo/+TuHfvJW8rvqI2PujQw0bJRtTaV43UrXLTe/fEq5X2QnshPya7Se5wuCgy8OvO
-etkUwtggJEjBQldaNuL12fNckDvb6GotrBO16hq7VrXoh8Xwax9UOxWvViq/yfWN8oIO3FzVQnrx
-4df/DiM79VOvnYI18R9+/R/COr3URgYlFs62KCKds39TVRCwpwucddv7IOZKXMpG13Bs8LcgWqqG
-iYv5Wsg+rKzTP6v62hso560xqpmK037e6IousL2rlBcgq72HcUyzRlkfL3llTVDvwlS8sMIp2Wzu
-iAzSqyBauYYZVnAYqqDqQugWzj38SxrZrH+Gf1knOpiCX6laXOmwsj0dC16W0drGN8JTWojO6UtZ
-rYVTl1pdFbgEtSpBiwW90BUdZpius40HLdPIte1BwSz6ppn8UrACkXMfHBmAm9XFH8SMLwOxzMS/
-aqT3ImRKgOfuRSvNWmgTlKtVpwxMLOlBL7S5tM0lao0KVZBXFUzZF2Kh3ykSdddXwTpfiFapgCej
-d5Kvcta2vhCNnFsng3Va+QInAjusbe0LIS+lbuRcNzqsaYVkJWvV6qrsjQ4kl1MxE42tZNOshazg
-NMp5o0TXyArlUsA5buVbODEWznmaDGyp9xqunqtK9h5PmfCyVdnsi/hmuN8waxgRjtmcRS1c6UpF
-jYh3w2tM6UB71D10PkE+R8ftIwaGjiJKsDUqPw9etcqDavg0HSzuvD57fnebRpuK4wAPaGWjf1Yw
-VflWrWxTK1d2zoJFrWmNC6FN1fQ1zFS96xpd6UCHY6lKgVp4oZw2S94XWKQNeYfdq9BiKS/ClSXR
-lh53wnZBt3ypkF3nLKh3fwD6FcRWmyBY+bfaLD/8+hvYtztk5+6SZIiq98G2WyzenSezu1OQ+29t
-WAllltooL6500winKgXCO+x72/YsQM7OG9UKb2TnVzYUolFL0CDS1Ki2BhHzhVhJB+8XZ+sL4e0i
-lHYOug+e0Dm70I0qcBH6IFnhzHsAcwUbh+GgsW6E9eicrVTdOzXNzTxOv3Ma3lH/rPKbm7W4VE4v
-tKrFQkmv4wla2KaxV2iIYRpgd1kEVflTL+Ei0SkjG7gYj2KwYqGdDzxOo4S3TU876vuqUt4LQD5x
-f43XPihTwVF0Fv6oOoUq3vXGs2EhyeYXUF65SyVWfSuTuhNh5Wy/XEURS0oSsBPan4hDfCGqlW7q
-ksGtcIrB2CB0CuSsIbG6lA1NooVjgI/Tc3wfsLwgBXQe0KYM2ylaW6umEOqdrAI+q/clqMyV6p32
-IG4k29rjY6PolfmWVtY5VQUDa1atVAVQoWAz3jlb9xUusHoH+g9e7sOv/w5qBmYl61YbDbNBYQIz
-VcJ7sYIGLD9FMNL0pJ5xdedKNLrVsPzB0jiDGqlQBxQiKNcWqO+kqeCoDzJ7pfRyBWus265BSed1
-BWkHWEjTR0khQQZj0KMqDqCj6o/YLR9kwDFLuyjDSpV84G6xY2fxNlB28EqndBuc71efoA0jivFC
-B89iQHD/f6GauQJtBNYkoAWLWrMQhzbIuQyWT2rwZPkr0WqPgkcKEoZly6EZ1SaMpo2Iyj2f2elK
-N7rrUCfd+QHkbja3ffjxziqEzh/s7FxdXU17305V3U+71Y6Ev5a9b3fuPhJ4Pc5XW/MJt8RLy1Z2
-6f5WGtBnvhCXaIPoHfnFPmHQeH9Jt5d8587du3DWrFdxrcBP9UJ5hBp+tR2aiXkfRG0RyA6Xwk4P
-lvPDr//Nk+TDjZtIFXX9d9aJkAxwgQPYjjWDbJJ61wBsF9qQVkQ7kJlB2LAG9CjD7xzvkiLRputD
-1HwedrZzqlZVgx5PZXvnVTKPgGluQ0u5dqPjpWS1IrmUgIoSuIw4xlZV7xx4CXRDBrLwaMqASAsB
-F14wxlw5yopmii8XlezoL3glPEZXfdO3pe9UBTBV+B7VBQHJBFxBjYwgAfod9DhTC/VOk+HP3zWs
-ZBAreQloTJmEM5o1q31ab4YKyiFkggOHSB82jl4WjhxMHZATrNy19ZpGVTGAWfAaKtvOwXWxToOR
-OLpUbp2WGJATTq3tm6C7Bu2tvtQ1KTtCBvDYkhBshgxAnKuVtR63yiiUlb5FLAh3ZPgS5g5XWCda
-63IQ6qM9lU2D+92hUKbdnYoZmS/Tt3OFXjFPnXY8gRY4NpVT0sNWRNhcwSE12azpbMkqiGVj53AN
-oGwwcY0KyTVUuCygxdQCpiu7TkmXg/CrlW7whYPUBiH3NlhNqzAG+1GGMwdhjQB8BCth6EWjq+DT
-po7dzehO4Wq/Pns+yC07wtmBJgFs5d8yPOvJWQXXgI6PdaPTk0tpZlsXqHyUdgnBwMzZdwE9Fgpe
-m1Yb+JOpBeGWplR1X0UmZzQJQm9kxkErVbjEG8ibPCL0PPJXi3AAcQx58LB0etk7HGW8qgAvmEnw
-IKo1efOsxZOrbWq8RpuFci5ehGfPXhnl/Ep3U3G2QkVonZhb5xB9LmTFKiXOcXAqRhOhEx/Fjs51
-yRvXyuD0O+EUmHDYXQZuMHdSm6SxlzIoFI7MlegGVwL0v+8jRGqkWyqkZRzIeQaehe9khV5DWKXT
-gZphwPxT8cTaZaPQOtVMFUUMrzwerEjNwfLhOEvlyrn0KvceAGRfKhKLmjRlDySDFxcnp6+On8+e
-XRTi4ruj2dnxt8+O4N/HL7Kf4LaL1y/+9OLkLy8uhO1DZVsEFzQ9cfKyfGVt4/Mn5h7YYPJrdaka
-sJp+usR7p5Vtd/Jrd6oOYAS/Fs979O6fOdpO1b2hYQA+RGcuIWpkwMAzBYcv8yA72/UNQRtazUi6
-sTOJizIYFxnNus39cbbWGRuSO77A7gFG+GuPg531Zinu/PD45PhA7O1O9/b29nb2vnz4oLz/zTcP
-pru797++n7261VPrljs3XEhISYljgjQMUXJqFvhAFTShysYDjm1p90Cng04gggowPGh/T8cuwfro
-n4F7BQpgrky1AoCNb7ZSJjowZilaFVa2BoE5fnUo9nd3H26AQKOR4IAX0qGCCxBLZvAgSvTmeoqg
-qpXRFVhLDDyMR1ZKVX76Uz+fymrav02jx5FbGnGH7t0ZHgjD0i+nXb24ezeZg5whjXhvsFigvlrl
-VLMWK1CtVvgAvwd6VPuukZEgc6qyribGRPt4ceJOcAMijERelFgTcuuuOefg2ycj6ovIi4gFUO54
-cMAq1xpUO2hvfgXa7SXozYXUrmFOLPnQsqpsb8jykj9NfvNHnLAUc/ipVx6B2y3uV2Kz/xxvgJXe
-m4qn9grhwIjgynceTQ+6uqgKN91RJHEjs5WUeI7FB7o407kZD/lZBCS7ZhE4X0fKia6PqHwETxBG
-4NbX5RagjDGeyIl8Okv2x3OzTytZ2zyIA0t1ndaKUqMN+vDoe2wRNFwxcNjL3MDIoD24YwixIrlT
-JmA3kChM7/zDdBHfANyJqohpgUs/jTD647m5PxV/WWlQ4PHFC6EXQmk4xcVYDUrRoVlmMpjkJyA/
-g79plQQUuugbIetLaYJcgldZKzcQgAtnf1YGxTGpDFaiOTWS6LxIhQAyZ+e6EE6a2ralV2iImN67
-kk1TViAaTJb88dx8ORWHhKGzyM6iNxWZgGadKIN0NqqVNEuFFF5jEVRL5nBaW+vFenwUMs/zRmFO
-LtOWXyc6DZ+T5CMGO66UfKtwErkG3CRDQfZJIUUSDo3porFXf4yKemF7F1Yi6iGhiOoEXZeWQ8ha
-gmeBE5yKvwAWA38JAzm0BuTAA+WOkBcUPIbYRGPNUgew5Gh7Gh09Xpa7RR96p9IyfyzikqTAR+oK
-n3iL5jxJd0XmCsOS8P5/+MMf8HwDTZkGx4VBvkovTUbBsQfNy4MwiDTMPEZsJcrj58UZ0PdJ/Hym
-e+QWzdN7EgdSCsWNWgcO0TUTMI1vfBZdsWE92ZZ8l+xqrv9JdqJ44em2i3A9TqnBCDEfrOrBlmzS
-uVPUtt/2uqkz2j+dM7Cdng7RjcS/2CSbR0zuZgQBnNT7U3Ecd3IUp5+JuVppVvaoiRhMI8G0Y/vA
-PBNG8aaoOh4ToAZXYjvlzFvBHibr8EGJ+co65abn5sGU5S+o7DUTQiHpIJUbvXnxs3J2Y+drFTBa
-Sjt0qS0hcjr/1igPFxFMoyGNHSyFU75vgriSHnSBqafn5qspJzkoMc9DNyR/ACRIhDbjHGyc0Cgh
-iM/Oe4y0cvLIpcpom1YFpyvYpodTcRYPSGU7VV8LRWyGFZLRH0cgYlxipT1RGHimWJIHe6veIXY9
-N1/DriaTlsX6Ms03nL8GJRw0HzmmGcBnXhKNBbzRN1NgyhGNypsCDrw3BfAdTix7XQMwSoh95NZd
-i1jDUUszjyyCV+FjIQC9NEgZQuLOZ6jSs+y+a8r03r3XWzXfkDeAuRYpDgWhfqdwYRL2aKXpiZFG
-dikL12AgOechkCHpSMwjixFxOTmqcGAVsSwNu3eXzCSACXWqtYhf2UISIAzrKb0M5+PwanfSBd4p
-EEOwU/fuiTMS0SSatmXuUZnaOh+ZyByVolzU5cC/CrjXD8FyhKhZFBIJSVoyGXTFs/tOVn0TGGsx
-6JhiXgzGuga4n3KTPkZ3b4v486gD04dT5A2Tl1bXuLTRzFDOBtO66NeGRNKTJXADo8QpBRX4BIrf
-CGxWHm2zBt7n+2ROcCiYaV8Dhie/sLghdrtpFOj4xqQ8epVoiHPvTY3SueRIjFPiWZSPcaJQkm4E
-QSnCqTKKLAu7DHzo9WAnBOmJfaqSCzoOBKIwiZtinNbJqmGgL3PVpNpOO9QoQ9AU+Q+vhGqYgc54
-L9xCZF+QYYTsJgc4zq3F4cvXj/PVYWIUt40llHBddHT5xDBTjOY52tRC+LUJK8Q6C/0ObkPHEWwC
-QVudXrqm3C0LLAeGWNnQgTKJG9rIwDlhAvzNutaMYtlbc6KSToFGXIuYtajeBWVQeBODQRtZW+Uz
-NIvWc+w1OIWwhMigbEkwE0wVYtlLJ01QJAmb/hmFSzDmgRKOXHsKv4HNJaUK4bYeE3Qch1gxOyWi
-j48pe1BSmOhYq2zJblP1cBcu+OP8rrg4wDM12gziDnM8gL+WODEM42N492BbBsyjeN2gERIjUWwY
-N3Qyoj0uUtwr2I0wZqdcjAmjnKDSydQaPhOQkiMloyux/+CLQjzY/aIQD+FfcNve7u4XwmAMHcxq
-JCOIy6uV05eRcCdRUK7FgTm8qE1lCfqAdGvTp1yDpZN1T/5cVNiDlh5CF8IrynwbhibNze898icx
-i2AcpNwSmyzGwUkck6dQNoBkBx2f067MZA7BEBkCZAcheUsSKxcLmisPh0OP4hv3d8tWmz6ojOeh
-q4De25qKtoXWSVGKrQlO10wX2lt8Sgb0QdqCk8YDrAWNyVlLs0fwZ9zCca5HtOqDhWNMSVua4CfF
-VRlG5qpDvaPMBD4WW03vKNBcwh6yQeiHBcWX9kpyQLSTFWoAZCQw0tWDpC0f0UNidBQnAU9AeYIX
-QvwBPnepDFgEStKLUCsPB+BQ6p1sNXHiuTNJu0eZG1eyobxbTSeEs0yboEu+Ijh5qRp6DSUbgvvD
-4+no9MG2CP9SbLCR74aJSLFaz52ueTd3nswGvTdsnhGzY1iRMMfw2aY2julTuEdnvDSMIhCb2I70
-SCE6r/ramnVrITnlegIQHSdOlIDAAT2LvEbroncnTqFEoNIdbRyFMWMK7njYBuL/KkvLpdiYzDMk
-h43Pc/a0j2JW45sdL1D1bh6RQc+iz8IeAsV1o3efg+vM6lJmr+FTBrgCMzrILY6v49TCyZZmLgdz
-XuJyDaZygFdI6OPdnNA5KELpheKiAjBzqP7hnUZJJMohpgLcdbPl43qDXjYlTg8gwS1m7zDdIr6L
-t8C6XlxcQI7MuTl+cfr61bmZDQQ6rmgkLc7N2TYK8GZifEjIzYjwczNWamNtONrcwb24xpGeG8H/
-ffi3387N6cuTw6OzMzETH379d3F48vz5yQvx/OTx0bNz8/3gb3z4t/8K2h0Ux7tOIibC321yMRlT
-DX8eiJyV9KsbHv0tPvp09nL27NnRM/H86NXTk8dn5yZGMQnr3vTfdT6Mbhgedn4uPvrfznDpLdfm
-V8I73Hzl6AUP87U9PHn58ujw1Qv4w7PZX49enpvjDLJvhgYGzug/JtZ/nMpKimVjbU9evzp9/UrM
-XjwWR9/Pnr2evTo+eXFuvotAcwutVCA932MqSowngIKwhpxBZm/OzTjTNAsaFDnBP07B3OJ3gRbY
-mPXT189nL8STk++PXr6YvTg8gjSBnOchkQPB3mHeHTIW0HeDv+RcD/5ikxXCExvNcfwjBO/QQ+qc
-NhVlEzHHhjRXFuy+lp/M4Ynou2AOBhNz6bbEwGKOo2oWH9FNnJhel+Ta36KWTvlqcYZXZzk3rFl7
-ynFvbd030pWtNbYBYgrOhwZysHeKcQiwUL6DvcR0OHepXOlAJgHtPf6bNEs7JLciLN1G5qBl5qtB
-IQFcT1EY2yiORA+gHKROuUuNgPTl0dkrIEk6SznbEbDDTaLVyxyqnloflk6d/flZNOvXS0cofIyX
-v1S19uz7WqPghDESXotD1QBsBaXOBWgQnYim+292Tk9MeRojOp4TnErIsQHEq8BvfDJ7xOjjhiRy
-pFIqi/H9TlZv5VIlzPIY0uscUq2QrAnzGRGEmCbG9UKAlhK+xOzZGMkRmhDmxYAf/vXZ2b/SsbBt
-q0PYtFL4t2T4rxmODYW+Safjn3nNXM/qf+vb78Q3h0uu4Wie4bVjv3mWySQhwr6ghKL4Ulmo4Oa3
-oXSAcUAguz7TirjPOb2E2CctxDSyawiLIJkPw0BGXQ0Li6gcAhtx2I+oAEr3sI1d3sa7Ph+ujEGc
-lA9Acaqx54EhOACN9Ed2/jFmwSQm30y5l1xENSaLxuUSA1cNpYOLcEV03kA6Qdo5OkZZ1DBJ6ID7
-ihRXH8B8xoNL468gDSFlYKT0CIrkcjYd0eV4CrESUzXr6bWF4bLDpFsGpamhylNUoGviiDeV+qCn
-D+hzaxkPJrNy5Zpf2R4CWpSOjvmi3cgBYEknAlqbmE/IUjjQKHKpaOQFhkyBEqeYCU028l90P2b9
-cwg2PSCjFQpyDzH0meHRAXwOEesROiVvZb4Wb7Wpx0ka2+twkt89OMGYrkjqOS5zx/R5nSpN8ogh
-qi04OK2cimND6TrOXsGEwYhgkRwKBhqRuifOkcukEpM0gs6ah0n5J50MEAzwBTg1w46jk+0GPRD9
-Yq5LeBsrOzCNAHkEWaX8edBHmKjbKE7+8alUaI5GlnNWOBsO6xbnlArlKYuG/NLEg45WDYvdFlg6
-ms5wkRPHcPhwEfLESf6lDw4LXyjzmEOenW6gwKUHLmMqhsdSLNAPMXxIXUXfhcJcwIF6gRUIUfYw
-YSNzx+I5PCQIG1XvOCABFx1BduCVUm+btbh4TgL5ckidvQDPF/Mn4WzGC47AM7mAkJrC8izPEUkM
-sPkBrpG3MsSLG42JvG4UzzwYeXZJrn9A9+dH8S/iDueJB+nCGxD/IuWA44/+bsKZh0OiNwJKCsKC
-fSArjpFZkC+0KRh7ymQANRampPDRwvkTLofzkYqGmGaMRxE4xmUPPMWQt11LCgvNnZJvBScnDMza
-R9OrUsr+mIRbFzeWFvKE8Fik5Z6KmWEnEuXG2ExrYKU1k4udU4sGap0Amzc9FDZh9rNoMOfec20y
-EI4bWDvJ2dONnBcULWQnnQq9M5mJJ8KBUrDWlNG/4NozyPCGGnVOhIgDbBR86GxOWJLWrIUlod/H
-d84WlmtVkdsTsImNhGKjZdK9lJQwGwJtdAOoJ6Art9/xJdyR18LGrIAbrn8AinTY7Jhw1I8IBoFJ
-6xCRCorD/zOm8UDQ8tfPJI7LG3ASVCLBIgeKSq6j5K0pqv8sVRMgRTak8Q31EkOyP6ERLBPlHcgZ
-EIrWP9+oFxju/mhpQJ7Cn9UIDBFeCtk/T+UBT46yh4xLARhwjpILxwn9sSxqb3cqXsYgt1c+lnIL
-mSJ9JazZ0tm+I+SWIFAt1zhEEsvsyI1qMgW2KaCc1CSfeE5mW90T61ItLoTZSTUy8zAc11ZBYQvU
-FCTo5uTVQNFx9sxNVSRj6gqFjyDFDSwWV+4RdhhXmWDuEmQejfOWvstsnmyu5NoLSF7ysUh3zThN
-LSTkubDmwRSmgfQArXydp+8QbnAZBca8R8U/BQW6MyHrEj4hC471VkzMc9HcJcDIQANEKIg6IoZk
-arn+xDuGmeJN0a2spW7WFEvQ7Vw2yMwDp45iEyxDezDqaH3p0gAlGLzSJyaT74uUQHdKDtUFedsQ
-FjVGLSUHvrCkYihdHQVuTUwsc9HNEmdPZ+X+g68QDcF5I0u+oLyGcnMhvYqFamnPsNojzZKeC2+H
-+VHJ1A+czlTk6D/yXuCZqFiDDEXartS+nKuAqWjyigdGKgMzbrkSBZII4kxI74HXBoozvWstdj/8
-+tve7i4Rd1jxoiqLSnFwZxhlJZdGQm7RgKKIgcDMgFhdGdXxhbog2L2BdS66iyLeSF4q9jaxFtFp
-TEQUl9JpUINjFPTuB1V0gH32INuXAmfNGjN/iRQmqml4Wpcg0FGyiHmmHr41hzShVwsOMxWzULbW
-hzIW5sWMVaC0ILxLAUbCX3nxWp6akk7iVDy+pkX9JjzxDCivZclyYTqmyUNUpsWmDFlHCpJs1BhR
-CBCSc91qrlpTZl8CIb1JbAIXuYYeYbklYw01gZgLDvnbZcoPoFztYANE8ohroV8l5VeIuYLoC5jZ
-YjjfS9kVYu6kgUYORR7aBcqKM6KJAEPXcJoVNI0kElK3QfNBuAnCYkNl05arousR805QaGSUwrxM
-KuYbQsYGbgIweYr4NUhTYjOtTGVrCrUD7xpj8NM8bXccDEhnBHbzyYzkFMQLqGIUPeuI5IwHKIaF
-N0MbsKHvgGyEUw7vB9zPcapa32Y0mA6k/HOsTlg6paABSaqPEqgOQTMMoc1ge2ew8oQPSfxDbzR4
-VFk1LyUXI9ICrMdhWJ5yyUkoOFLLtA1FcRsdVIQFw69j3ksK/0KrKO2SDQFZKzHvQ1DCxJDa850m
-xkd70ah3uoKSvm6lq7EeuaM3Qx0pLZXkrsiDHPFcDf7UzKyzHUGdu4C8u+sprj14429pq5nGYvXN
-acoWOni8sEK6uQ4OlC+VG+Ks4oFGUZSkr+Bwk1J4MkM5XSDC2ZK8gzXGhIHRDsXTwgH6kUNOnVDI
-4cNYOBq2xJvB9J/MhuyJMGYQWINSBuoQYMVzBsLnxcX+7u7eh19/29/d271AfwCmjM77/pfleNyl
-0/VBJpse8l529nd3d77c3S1GYonK8P7Og2KQPUFVH7vTr3d3dqff7HLfAhY7/uvF3g4UQTpxsb/z
-4mIqzqJ8J1wGS50TFhRlalWtpRnWeih0AazFf419frKV2b5wrD7mm8ueijOpkGfwfSJ5MSTNJXZy
-k0AENjcpJnpi9MbAd4mu+oAOBz+C6b9Rrs9UvKC0oyErCZb14YMvsgykawIxSmjCwhVGiOzc7Iz7
-A1AtmyzopMAcMOEpvYVTMH+KwocNshRcGAZlG7HsgUTcRPUbkevtqTrRDYm9YSjKGFI7CcICb429
-MoOBjFNmBQx2Fo5Qb1olfQ9q/kq6tuw7Qh3I+DyKV44LAHAt+BDt0SHa272/e0Ga2INxur+7WxJ4
-y8uJSEHC+AEYPgoFUTkSUcqNXWKE9PD09Q4bXeRfagqXNeBdgUsMA+sh5EUlWyoPSHoIfxqwH1B+
-aGBJRApthYZchmR+spgkGr0oFFgYRZ0QUzI7oRP0ceBKuAQH43XMqJqMcRuId/ZVIusdqyE28lu5
-LwvLfbaaVJGV7M5QU9k0eMotJv0aW8YEnnR0SYCYN8poZ8Bspm8VZI/i+yLhtBmT5khH5JvG9Wpg
-CjGUlIxmMepUlu0LUsFgqnnx0TQm5z2LSzyn5USX9X38SbwXJ1lay+Aziffn5n1Zlvh/cMPTDbP3
-XuS5BJcK/VUApOsOAoxDNnYKAODh0D/1asRtE6qHF0Y5Tq43PjQlEWTR9vcYrySmfaAe8Aih57Vp
-n3GgsyyRQGTjprOK5wcWjpqfzYmeM9aU2iyg1hwkCBaMLmT99c2DL8RfdOMtlfQ7CBbi817FosjM
-vLwXz62xwRpdpaJJJP+wcHJbpbA2FXT1MOGR6GMuBNQw8mQrZbyFycsAEs3OHb/x0ajqcvRwgvOp
-bIxxPaVxwZb81Kte7bw+FrVqmMvdegZpZSMUiQ7t+8i8b3NeC9jkMuLf9MstnmzytNhfzbxa8mbx
-6YdZHel7cSq1u9Je5RcPsPQpN35IyYJd0/s47R1cJaj95tgwDo/NT/ugI2aG4xJ7sPQeObyhiIj4
-kVyCYsraDdc+yquRoiJIaXZR/dF7sjetHPeIhB39NnO/0OtC12qlkKge1UUNqLC4Bgux8ArBI740
-01xZdg22vfSc05C8d2AW4eqXecSGS7yQ+gNFCBkuCOAirMIgUVDupx5Ck7AkWKaUUJeco5oFtuxS
-Rxu+ccKgtY61AYBER6ir5i6w6e+NnKumhNyPiAmJTHNqCdJCDTpZyXKY6nvpliv54dffHqtGGrUW
-CnOLGX+CV5gsf6oygwV5aps2BqLhQdF/HBWpRZMx3aoYUrRc8pFmX8spDyUIWJeksFiYQpbZWSdH
-H7EFZ2xmQ84Vt0qqx44SmJgYaLipgjOfH5q5WCm+USD+CCMP7EldLyfnpXqEoYZbKsXZBn85HVeH
-g4+cmai5WslLbV3W94crv2F9lIeaUULV4HxcKpACSOiQS1Vits/o1aKhhDoJKR58EeXQyavkmekW
-T8dQgivF3u4XVIkUQcW1rbq+zaPKgWsSMk5ni2BsKo4XKc2LICSSB4SNXR+zYavUAJB2HlvspUpL
-DOo3eek7HPmsgL4e2MBUpInJ6jVU5y3QbK4wzViigGMp4ZU2hpmmSIxTObypqYxwSMOJWzUuImK5
-h8SvpWUU3VmvU6544nYxsBErc7KClRTTfETQDeQkrIeuOsQs4AHHKzYQPDyDfjWwR5HrwnA1YeGU
-oQhBCiDxwhV0kon51indBxmjSOvk7INTnIZEULWlUsshM42SGVWJUE4PoU1O/Mmi6VSOgW4fjlIG
-W1Ji0pDrMlw4h9SFocsQ9AutZFN2EjwvvCqxLdK/5cvAVNETVd5zFGiNLD1lS0LeSL5Tz82Eijmh
-pRzVs47rRsmDbbARmlGj3gaZh7etDuXT+hqgA+/UHAu/0f2NCWWjjgeohzGHKmWMfSyPspHGQDOQ
-3viyWkmX9WOOP+L/P86vjrgTb7t5cBVWuvIlt4ymNCroALqEI20AxNySuHWEAxTilEagpXkMBMST
-NAQ2hsZukBrJA+yYNlTS4tWnxIrDLp1gWRkVuvaxSMzYAImV1GHfGUo3artGMzXBvv7Q8jIOS72w
-Z1WIlbPxMdDKiKsktMHkDvw1Ncq8dXo3N68cVXjuDL0SaGGHCZRUPpd6ZcbJxPbd9MY3PiduGV1W
-LqwreQRfyqZvjcbd7JxF6gcMVfz7TmwKleXSDZ2LAgRUNqK8qdyMowf8Wz/k2S2REsvVeAfBjzwn
-D3TAZvEhPDsW1c2RWLpykPloRv3NwSTWl9rnrRqoTiWWNF/nv3qvuFgLG61z13atwHgbBR4GMlwM
-pmJ/kXE5LOT1MF1B3v/14iM/tKPPWqsB1hoV2QDV71OgKYs453mYaVpcyBdrBNe5IqLfAWow0WlK
-m6DeYbkpF8AFSr5CZxeU99xaiD+nLOS6bzuAurJ623dDYJqGovIXJJ89lpqvUq9VsOBeQ6IDVz0R
-MsHujB5T6iA9Om9RRJ0OiDyCGDOwRsvY+AymRR1aAf500vsrKnwO9q0aamKx6DsVTTrPz6bUEEhv
-8MHZNYtFVWEd7xIthRliqFT8M3AxpF54X7La5XjDZqWmXC4dYAbIcaKPo5BAP5WopPL+s0EtXRTe
-TWom60MrDYgIEFpk5zjd+yP2AOhawIElb9FtCpovFyd0OcPyWZbGOspn/8TmLnmx+D4ORxXgN7SM
-yVL5ou0sxyomNk65P825y1TDuFkfzuQemPHredzjXiY35oZkvMP2ziVDbT4mlxMkAoQwZFmDec0r
-KPN+4v7GIsqvqOnpKBWZ6ksiPuamG7GmDfgYLmUlTzoVI+a4nj7vQglEDzHzKoZRik/ppxGbFkCP
-VfwwCEA4ykWaZVUWpELKWpP4QOuRIYRQ5IV/EM4GpB47eiyUAb2TN/ugZKRZ7mCgV5G3VzXRM8Fz
-ihkpLIZDiHrk68TUHfquAi6op9zvoVI++h47xo49FXY7bj6AmU0rAW7dcgAfZybwtJGG6NHTFajg
-9wBQoFCHc8kF0Go6DLlHOUkaidI9CFMMzaLF+/xbBpUMsrHLXm1EKrir6fB1EJh5FmuHYc6Glkg7
-bG/x2ymwTMQS7U8JDiGUamRAWvg9/g60BykSXwwnBYsNiqzCAx5DtE12pJAezRKOmzU97n5q8kq5
-C++z/FEE2VguPxzGdLQLPsZ8DmFZx/4cJOUkX3An+YEo8fTsL5Meeg/UDSaS+GL8IYYsU2GoN6u1
-XBoLJxKe+ydw/8jZu5EKwedBo6RZYsspRR0j1sWm+ci7SVCCMxDOFAYcxwjZ9igZG1CpSN5+Nfri
-w/s8HDiXgRIrkmbB+Bc6jpecQ0snKq5qpr2wI40Hs9vCMNh8hmwjPvbhVHynKeMr1Q+9F69nrwpG
-D3rI08W8YMi0G/cGilokGWDxXryisKJTDbSfHjVCQoY9zl5lB+vm8501g0AIDayPDB5cYZy2DrdV
-szzL+nbAZF7RCLAs3/MIhHnv3TsxqsSTAP05XFoaHfCDVhCWp84ESDdhkXC8Aas7uAU9MbtDI40h
-OAaZA5R8D087zuvKCCcz+QBPiyUISOAy47jFERgl1qauPnlKS8w08o2S9fD0k8HI9vxPfjLmMXBi
-HUFh8scu48eoqJdz51QqmUJuPRPLxCLzw65lGmTXwiP55GAOTYz1ZQcrlcFzfJ1rbeLoj1Py6tD8
-BL/axdlscn17usQjzIbA3Apyx9j0Yw53ChPilwZiCi0ZTJjA09QckrvV4Q9EKeNMYqEDZAOvIyOY
-IqGoPaHnFJxRVYzypaK1ljX0P+HncdF3QsDaGnhK5hClLgxDPyXJjXCzch0e7jAGIdCz8jzaEL7I
-QyKa2tNAf4jR75Fxt1j2k5pHyBrYtGrNjzlN5aMDoYGbv1JZBSiF6Zc2YnKAmuvhO2eyps4JH212
-G4t2UGPEW0v+8ETJjc1v7YAbR8EpncQJHPLnK85oFFAd1G97Ku6YaT29OxX3Drc33L43FT98VpPs
-z+3QvX0yec/uz57C0Kf7H2/wjZ0iPqXl9VTcgT7QMOvYkjqf8E1NqT+hbfXG59C2fTImWzL8Mgso
-+GtP3/ZdlE/5hMvnPf8Zd5gVrew+aQqj77189vdhPm9yzzc+I5N/ReaTJnvTd2T+mU/QfN4r3Eoo
-fuw9PpdS/N9ITn7eW56OuEsqrWeeDL5dBaxkpGEjK5ku+MgC/DNc5/8ZAhWW5a99IY6mhfgP2LC/
-EH+almekTvbvgku73PzCAH8QNmNYuDiQes+PP5bIXAbopbEeGxwlzLLLs2tiZXAhvrl356u7hXi4
-e//Dr7893HuY6+CPfzDg078sQJ8h5S9lXql5+nzHlQLGB4JZ+LVMMeuXAGn2vywEfMH2htpfLi+O
-GUgVI2jhw7oh/56/EZo8fvzUBrPD9bhkadRAYYcC91B9H6dIFYzsgcVCzxH5izHf7KM/RB1uwQA/
-cvgl+/LuTUGY+CHkU/r7kBwEf8fsJF/JJn7NhqMvvp+n+wDOVLYB0A4kMKYcYmruUJ4agd+BuL8b
-G6uh35e+WjTIo4xVCOOmcTAJjEgxWJlLB19FJpJoeL03/FYxLOnhU9Dv4H+QZp8cTOJbvMER33Cg
-fBiYmi02uKZz1UwOJiecQAoeAjBSd764O/mlmKzTqLDKE8YX/PwnM/rXj2lcXh50ILLBn+fLPfnl
-l2LybvZO+1e8utefjS0yx32Q7k6KyTq/azzopnQUE5K446xbE33SF5UtbCZKUASISYRuuHZ4GfAF
-Y2qUyzh57M8zunv0pYo4zMqpxeRgEs/6UodVP0dQNTP1er3e/3oHPmqUnrAzb+x8ByJ4O7Wt/M7o
-CdO2nhSTn3rlcKOIrZscTM7+/EwHlOGfYMp/OX71lITL39kuGnfF7EzcoU460Orn6Ezc2X9wtxB3
-HuzC/z7Ef+/t7t49N3fPzdnRs6PDV3T59gEL+uP9XRj4PBec88nG31iMzifn5ruXJ895oufm5OXj
-o5fi27+KG6V5/L3w59CcU/OHT69Rk/d3c3r7/i4m4I/UABxKiW0vPqWR46bCgGPLybVQwX3rR8Mb
-aZa9XMJuwSYVk4WGVsJ4zLaoG6RgH6XGfx9LSCYkDvN5nDqMxlJexz7WoIq2aLApnGhqkvomq7WD
-mY0OnfiXTVXXjXoWbdOr08mPvyTvrfdtiYAvP163fOwRTlnC7NfP041wcjJ6agSXn/ngAQ9/P+Dh
-5wRMP2MuN0Hb8RwZJ33mFG/Fu7fP83Ox6nja6fszlOLwmdN/+fhIPNPmrTjE/oe3TtbVUExk3pYV
-Xr8xFyAXxikVnzOXU0w7oogF8AYDX9H725cRnq+7EOa1BTriUhnlsSlb3wR2yChZtrSmpAynsvfY
-ND1b8vRwxMT4PvvZS1oXoJ1UWXWll/kx2vwuGDaPI/13hvrh+vw/09UfJqFDVeYfn8qm8WlfvwK/
-HWf4bf4JK2hWz7u2ZaVv+q4UVti9we5MO/mkpqvQTn758ZdiEuMWYDG5Q8zkYK+YxCShena79qao
-AxJQEnvbM0hDKBZPwBvqkYTYgmnMycFkS7ufjFKeFDBk8wYbSuO0hoqAycE+6GXSwG9Q44IxfJMw
-68H93WICRSRvsIjkDVVAvOGMUvjzbjHhups3MbL8BsIyk4NJXuzOSR0xPy5+ERgR0wiEImzabp4P
-9h8UI8CIs4uY8eD+LsrPDfc+2P3H7334Tzx3b/e2B4P5+h01/o4af0eNv6PG31Hj76jxd9T4/wFq
-LCbcYPUNZCyD0YxZEC+hQ34L+hg/1QolMvFPJWBD5WCIBs1OA/uzfm7r/PI3/OeVhVSKl0rWJ6ZZ
-Tw6C61UxabdfHH9+Cj/ypW7jVs5yQ0Ra2W4988ctWo6FbLzC+aiQ/ejkMv2gah2GHzB5buPHpzhd
-OHPpD8C7wVeWlUm/Wl2/CqvwsAJoeDb0eFd+lf2MBcPpZ8wV5J8AfvFmHP++F/+39+KX/wlXUask
-xpAAAA==
+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
 </template>
 <template id="data-analytics-portable-reader-runtime-source" data-compression="gzip-base64">
 H4sIAAAAAAACCuy9a3fjNrYg+v38CilTV0MeQ4pk15MyyqfiR6e665VyVdLVjseESUhCTIEKCNnl

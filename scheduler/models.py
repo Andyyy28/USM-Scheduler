@@ -9,7 +9,7 @@ from django.conf import settings
 from django.contrib.auth.models import AbstractUser
 from django.core.exceptions import ValidationError
 from django.core.validators import MaxValueValidator, MinValueValidator, RegexValidator
-from django.db import models
+from django.db import models, transaction
 from django.db.models import F, Q
 from django.utils import timezone
 
@@ -24,6 +24,15 @@ def canonical_sha256(value: Any) -> str:
 
     encoded = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
+
+
+def schema_version_at_least(value: str, major: int, minor: int) -> bool:
+    try:
+        parts = value.split(".")
+        current = (int(parts[0]), int(parts[1]) if len(parts) > 1 else 0)
+    except (TypeError, ValueError):
+        return False
+    return current >= (major, minor)
 
 
 def default_objective_weights() -> dict[str, int]:
@@ -371,11 +380,22 @@ class RevisionStatus(models.TextChoices):
     SUPERSEDED = "SUPERSEDED", "Superseded"
 
 
+class DatasetOrigin(models.TextChoices):
+    UNKNOWN = "UNKNOWN", "Not recorded"
+    SYNTHETIC = "SYNTHETIC", "Synthetic / practice"
+    INSTITUTIONAL = "INSTITUTIONAL", "Authorized institutional"
+
+
 class TermDatasetRevision(TimestampedModel):
     term = models.ForeignKey(AcademicTerm, on_delete=models.PROTECT, related_name="dataset_revisions")
     revision_number = models.PositiveIntegerField()
     status = models.CharField(max_length=12, choices=RevisionStatus.choices, default=RevisionStatus.DRAFT)
     label = models.CharField(max_length=160, blank=True)
+    data_origin = models.CharField(
+        max_length=16,
+        choices=DatasetOrigin.choices,
+        default=DatasetOrigin.UNKNOWN,
+    )
     content_hash = models.CharField(max_length=64, validators=[SHA256_VALIDATOR], blank=True)
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -411,12 +431,19 @@ class TermDatasetRevision(TimestampedModel):
         if self.pk:
             previous = type(self).objects.filter(pk=self.pk).first()
             if previous and previous.is_immutable:
-                content_snapshot = (self.term_id, self.revision_number, self.label, self.content_hash)
+                content_snapshot = (
+                    self.term_id,
+                    self.revision_number,
+                    self.label,
+                    self.content_hash,
+                    self.data_origin,
+                )
                 previous_content = (
                     previous.term_id,
                     previous.revision_number,
                     previous.label,
                     previous.content_hash,
+                    previous.data_origin,
                 )
                 allowed_statuses = {previous.status}
                 if previous.status == RevisionStatus.COMMITTED:
@@ -435,6 +462,109 @@ class TermDatasetRevision(TimestampedModel):
         return f"{self.term} / revision {self.revision_number}"
 
 
+class ConstraintKind(models.TextChoices):
+    HARD = "HARD", "Hard constraint"
+    SOFT = "SOFT", "Soft objective"
+
+
+class ConstraintPolicyVersion(TimestampedModel):
+    """Approved, immutable provenance for one scheduling rule version."""
+
+    rule_code = models.CharField(max_length=80)
+    version = models.PositiveIntegerField(default=1)
+    title = models.CharField(max_length=200)
+    definition = models.TextField()
+    classification = models.CharField(max_length=8, choices=ConstraintKind.choices)
+    owner_office = models.CharField(max_length=200)
+    source = models.TextField()
+    effective_term = models.ForeignKey(
+        AcademicTerm,
+        on_delete=models.PROTECT,
+        related_name="constraint_policy_versions",
+    )
+    parameters = models.JSONField(default=dict, blank=True)
+    is_approved = models.BooleanField(default=False)
+    approved_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name="approved_constraint_policy_versions",
+        null=True,
+        blank=True,
+    )
+    approved_at = models.DateTimeField(null=True, blank=True)
+    policy_hash = models.CharField(
+        max_length=64,
+        validators=[SHA256_VALIDATOR],
+        editable=False,
+        db_index=True,
+    )
+
+    class Meta:
+        ordering = ["rule_code", "-version"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["rule_code", "version", "effective_term"],
+                name="uniq_constraint_policy_version",
+            ),
+        ]
+        indexes = [models.Index(fields=["effective_term", "classification", "is_approved"])]
+
+    def hash_payload(self) -> dict[str, Any]:
+        return {
+            "rule_code": self.rule_code,
+            "version": self.version,
+            "title": self.title,
+            "definition": self.definition,
+            "classification": self.classification,
+            "owner_office": self.owner_office,
+            "source": self.source,
+            "effective_term_id": self.effective_term_id,
+            "parameters": self.parameters,
+            "approved_by_id": self.approved_by_id,
+            "approved_at": self.approved_at.isoformat() if self.approved_at else None,
+        }
+
+    def clean(self) -> None:
+        super().clean()
+        errors: dict[str, str] = {}
+        if not isinstance(self.parameters, dict):
+            errors["parameters"] = "Policy parameters must be a JSON object."
+        if self.is_approved and not self.approved_by_id:
+            errors["approved_by"] = "Approved policies require an approver."
+        if errors:
+            raise ValidationError(errors)
+        if self.is_approved and not self.approved_at:
+            self.approved_at = timezone.now()
+
+    def save(self, *args: Any, **kwargs: Any) -> None:
+        if self.pk:
+            previous = type(self).objects.filter(pk=self.pk).first()
+            if previous and previous.is_approved:
+                previous_content = (
+                    previous.hash_payload(),
+                    previous.is_approved,
+                    previous.policy_hash,
+                )
+                current_content = (
+                    self.hash_payload(),
+                    self.is_approved,
+                    previous.policy_hash,
+                )
+                if previous_content != current_content:
+                    raise ValidationError("Approved constraint-policy versions are immutable.")
+        self.clean()
+        self.policy_hash = canonical_sha256(self.hash_payload())
+        super().save(*args, **kwargs)
+
+    def delete(self, *args: Any, **kwargs: Any) -> tuple[int, dict[str, int]]:
+        if self.is_approved:
+            raise ValidationError("Approved constraint-policy versions cannot be deleted.")
+        return super().delete(*args, **kwargs)
+
+    def __str__(self) -> str:
+        return f"{self.rule_code} v{self.version}"
+
+
 class CohortStatus(models.TextChoices):
     INCOMING = "INCOMING", "Incoming"
     CONTINUING = "CONTINUING", "Continuing"
@@ -449,6 +579,15 @@ class Section(RevisionBoundModel):
         validators=[MinValueValidator(1), MaxValueValidator(10)]
     )
     cohort_status = models.CharField(max_length=12, choices=CohortStatus.choices)
+    expected_enrollment = models.PositiveSmallIntegerField(
+        null=True,
+        blank=True,
+        validators=[MinValueValidator(1), MaxValueValidator(50)],
+        help_text=(
+            "Expected students in this section. Formal snapshots require a value from 1 to "
+            "50; this is not a room-capacity or chair-count field."
+        ),
+    )
     is_active = models.BooleanField(default=True)
 
     class Meta:
@@ -458,6 +597,11 @@ class Section(RevisionBoundModel):
             models.CheckConstraint(
                 condition=Q(year_level__gte=1) & Q(year_level__lte=10),
                 name="section_year_level_range",
+            ),
+            models.CheckConstraint(
+                condition=Q(expected_enrollment__isnull=True)
+                | (Q(expected_enrollment__gte=1) & Q(expected_enrollment__lte=50)),
+                name="section_expected_enrollment_1_50",
             ),
         ]
         indexes = [models.Index(fields=["revision", "program", "is_active"])]
@@ -721,6 +865,184 @@ class TimeSlot(RevisionBoundModel):
         return f"{self.get_day_display()} {self.starts_at:%H:%M}-{self.ends_at:%H:%M}"
 
 
+class ReservedBlockScope(models.TextChoices):
+    INSTITUTION = "INSTITUTION", "Institution"
+    COLLEGE = "COLLEGE", "College"
+    DEPARTMENT = "DEPARTMENT", "Department"
+    PROGRAM = "PROGRAM", "Program"
+    SECTION = "SECTION", "Section"
+
+
+class ReservedTimeBlock(RevisionBoundModel):
+    """An approved weekly teaching exclusion at exactly one organizational scope."""
+
+    revision = models.ForeignKey(
+        TermDatasetRevision,
+        on_delete=models.CASCADE,
+        related_name="reserved_time_blocks",
+    )
+    scope = models.CharField(max_length=12, choices=ReservedBlockScope.choices)
+    college = models.ForeignKey(
+        College,
+        on_delete=models.PROTECT,
+        related_name="reserved_time_blocks",
+        null=True,
+        blank=True,
+    )
+    department = models.ForeignKey(
+        Department,
+        on_delete=models.PROTECT,
+        related_name="reserved_time_blocks",
+        null=True,
+        blank=True,
+    )
+    program = models.ForeignKey(
+        Program,
+        on_delete=models.PROTECT,
+        related_name="reserved_time_blocks",
+        null=True,
+        blank=True,
+    )
+    section = models.ForeignKey(
+        Section,
+        on_delete=models.PROTECT,
+        related_name="reserved_time_blocks",
+        null=True,
+        blank=True,
+    )
+    policy_version = models.ForeignKey(
+        ConstraintPolicyVersion,
+        on_delete=models.PROTECT,
+        related_name="reserved_time_blocks",
+    )
+    label = models.CharField(max_length=200)
+    reason = models.TextField(blank=True)
+    is_active = models.BooleanField(default=True)
+    time_slots = models.ManyToManyField(
+        TimeSlot,
+        through="ReservedTimeBlockSlot",
+        related_name="reserved_time_blocks",
+    )
+
+    class Meta:
+        ordering = ["revision", "scope", "label"]
+        constraints = [
+            models.CheckConstraint(
+                condition=(
+                    Q(
+                        scope=ReservedBlockScope.INSTITUTION,
+                        college__isnull=True,
+                        department__isnull=True,
+                        program__isnull=True,
+                        section__isnull=True,
+                    )
+                    | Q(
+                        scope=ReservedBlockScope.COLLEGE,
+                        college__isnull=False,
+                        department__isnull=True,
+                        program__isnull=True,
+                        section__isnull=True,
+                    )
+                    | Q(
+                        scope=ReservedBlockScope.DEPARTMENT,
+                        college__isnull=True,
+                        department__isnull=False,
+                        program__isnull=True,
+                        section__isnull=True,
+                    )
+                    | Q(
+                        scope=ReservedBlockScope.PROGRAM,
+                        college__isnull=True,
+                        department__isnull=True,
+                        program__isnull=False,
+                        section__isnull=True,
+                    )
+                    | Q(
+                        scope=ReservedBlockScope.SECTION,
+                        college__isnull=True,
+                        department__isnull=True,
+                        program__isnull=True,
+                        section__isnull=False,
+                    )
+                ),
+                name="reserved_block_exact_scope_target",
+            ),
+        ]
+        indexes = [models.Index(fields=["revision", "scope", "is_active"])]
+
+    @property
+    def scope_target(self) -> College | Department | Program | Section | None:
+        return self.college or self.department or self.program or self.section
+
+    def clean(self) -> None:
+        super().clean()
+        expected_field = {
+            ReservedBlockScope.INSTITUTION: None,
+            ReservedBlockScope.COLLEGE: "college",
+            ReservedBlockScope.DEPARTMENT: "department",
+            ReservedBlockScope.PROGRAM: "program",
+            ReservedBlockScope.SECTION: "section",
+        }.get(self.scope)
+        populated = [
+            field
+            for field in ("college", "department", "program", "section")
+            if getattr(self, f"{field}_id") is not None
+        ]
+        if expected_field is None and populated:
+            raise ValidationError("Institution blocks cannot specify a scope target.")
+        if expected_field is not None and populated != [expected_field]:
+            raise ValidationError(
+                f"A {self.scope.lower()} block must specify only its {expected_field}."
+            )
+        if self.policy_version_id:
+            if not self.policy_version.is_approved:
+                raise ValidationError({"policy_version": "Reserved blocks require an approved policy."})
+            if (
+                self.revision_id
+                and self.policy_version.effective_term_id != self.revision.term_id
+            ):
+                raise ValidationError(
+                    {"policy_version": "The policy effective term must match the dataset revision."}
+                )
+        if self.section_id and self.revision_id and self.section.revision_id != self.revision_id:
+            raise ValidationError({"section": "The section must belong to the same dataset revision."})
+
+    def __str__(self) -> str:
+        target = self.scope_target or "institution"
+        return f"{self.label} / {target}"
+
+
+class ReservedTimeBlockSlot(RevisionBoundModel):
+    revision_path = "block.revision"
+    block = models.ForeignKey(
+        ReservedTimeBlock,
+        on_delete=models.CASCADE,
+        related_name="slot_links",
+    )
+    time_slot = models.ForeignKey(
+        TimeSlot,
+        on_delete=models.CASCADE,
+        related_name="reserved_block_slot_links",
+    )
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["block", "time_slot"],
+                name="uniq_reserved_block_time_slot",
+            ),
+        ]
+
+    def clean(self) -> None:
+        super().clean()
+        if (
+            self.block_id
+            and self.time_slot_id
+            and self.block.revision_id != self.time_slot.revision_id
+        ):
+            raise ValidationError({"time_slot": "The block and slot must use the same revision."})
+
+
 class InstructorAvailabilityProfile(RevisionBoundModel):
     revision = models.ForeignKey(
         TermDatasetRevision,
@@ -733,6 +1055,23 @@ class InstructorAvailabilityProfile(RevisionBoundModel):
         related_name="availability_profiles",
     )
     assume_fully_available = models.BooleanField(default=False)
+    max_daily_teaching_atoms = models.PositiveSmallIntegerField(
+        null=True,
+        blank=True,
+        validators=[MinValueValidator(1)],
+        help_text="Approved positive maximum teaching atoms per day.",
+    )
+    acknowledge_no_daily_limit = models.BooleanField(
+        default=False,
+        help_text="Explicit approved acknowledgement that no daily teaching-atom limit applies.",
+    )
+    daily_load_policy_version = models.ForeignKey(
+        ConstraintPolicyVersion,
+        on_delete=models.PROTECT,
+        related_name="instructor_daily_load_profiles",
+        null=True,
+        blank=True,
+    )
     acknowledged_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.PROTECT,
@@ -749,6 +1088,16 @@ class InstructorAvailabilityProfile(RevisionBoundModel):
                 fields=["revision", "instructor"],
                 name="uniq_instructor_availability_profile",
             ),
+            models.CheckConstraint(
+                condition=Q(max_daily_teaching_atoms__isnull=True)
+                | Q(max_daily_teaching_atoms__gte=1),
+                name="instructor_daily_atoms_positive",
+            ),
+            models.CheckConstraint(
+                condition=Q(max_daily_teaching_atoms__isnull=True)
+                | Q(acknowledge_no_daily_limit=False),
+                name="instructor_daily_limit_not_both",
+            ),
         ]
 
     def clean(self) -> None:
@@ -757,6 +1106,31 @@ class InstructorAvailabilityProfile(RevisionBoundModel):
             raise ValidationError(
                 {"acknowledged_by": "An explicit acknowledgement is required for full availability."}
             )
+        if self.max_daily_teaching_atoms is not None and self.acknowledge_no_daily_limit:
+            raise ValidationError(
+                {
+                    "acknowledge_no_daily_limit": (
+                        "Choose either a positive daily teaching-atom limit or an approved "
+                        "no-limit acknowledgement, not both."
+                    )
+                }
+            )
+        if self.daily_load_policy_version_id:
+            if not self.daily_load_policy_version.is_approved:
+                raise ValidationError(
+                    {"daily_load_policy_version": "Daily-load limits require an approved policy."}
+                )
+            if (
+                self.revision_id
+                and self.daily_load_policy_version.effective_term_id != self.revision.term_id
+            ):
+                raise ValidationError(
+                    {
+                        "daily_load_policy_version": (
+                            "The daily-load policy effective term must match the dataset revision."
+                        )
+                    }
+                )
         if self.acknowledged_by_id and not self.acknowledged_at:
             self.acknowledged_at = timezone.now()
 
@@ -1050,6 +1424,11 @@ class ImportBatch(TimestampedModel):
         related_name="import_batches",
     )
     original_filename = models.CharField(max_length=255)
+    data_origin = models.CharField(
+        max_length=16,
+        choices=DatasetOrigin.choices,
+        default=DatasetOrigin.UNKNOWN,
+    )
     file_hash = models.CharField(max_length=64, validators=[SHA256_VALIDATOR])
     status = models.CharField(max_length=12, choices=ImportStatus.choices, default=ImportStatus.UPLOADED)
     total_rows = models.PositiveIntegerField(default=0)
@@ -1080,6 +1459,20 @@ class ImportBatch(TimestampedModel):
             and self.committed_revision.term_id != self.term_id
         ):
             raise ValidationError({"committed_revision": "The revision must belong to the imported term."})
+
+    def save(self, *args: Any, **kwargs: Any) -> None:
+        if self.pk:
+            previous = type(self).objects.filter(pk=self.pk).only(
+                "status", "data_origin"
+            ).first()
+            if (
+                previous
+                and previous.status == ImportStatus.COMMITTED
+                and self.data_origin != previous.data_origin
+            ):
+                raise ValidationError("A committed import batch's data origin is immutable.")
+        self.clean()
+        super().save(*args, **kwargs)
 
     def __str__(self) -> str:
         return f"{self.original_filename} ({self.status})"
@@ -1224,6 +1617,23 @@ class ProblemSnapshot(TimestampedModel):
     schema_version = models.CharField(max_length=30, default="1.0")
     input_data = models.JSONField()
     candidate_map = models.JSONField()
+    constraint_manifest_hash = models.CharField(
+        max_length=64,
+        validators=[SHA256_VALIDATOR],
+        blank=True,
+        db_index=True,
+    )
+    rule_manifest = models.JSONField(default=dict, blank=True)
+    fixed_student_limit = models.PositiveSmallIntegerField(
+        default=50,
+        editable=False,
+        help_text="Uniform section and combined-meeting student limit; not room capacity.",
+    )
+    section_headcounts = models.JSONField(default=dict, blank=True)
+    meeting_headcounts = models.JSONField(default=dict, blank=True)
+    reserved_block_evidence = models.JSONField(default=list, blank=True)
+    instructor_daily_load_evidence = models.JSONField(default=list, blank=True)
+    instance_characteristics = models.JSONField(default=dict, blank=True)
     snapshot_hash = models.CharField(max_length=64, validators=[SHA256_VALIDATOR], unique=True, editable=False)
     event_count = models.PositiveIntegerField(default=0)
     candidate_count = models.PositiveIntegerField(default=0)
@@ -1239,20 +1649,54 @@ class ProblemSnapshot(TimestampedModel):
         indexes = [models.Index(fields=["revision", "created_at"])]
         constraints = [
             models.CheckConstraint(condition=Q(preprocessing_seconds__gte=0), name="snapshot_preprocess_nonnegative"),
+            models.CheckConstraint(condition=Q(fixed_student_limit=50), name="snapshot_fixed_student_limit_50"),
         ]
 
     def hash_payload(self) -> dict[str, Any]:
-        return {
+        payload = {
             "schema_version": self.schema_version,
             "revision_id": self.revision_id,
             "objective_profile_hash": self.objective_profile.profile_hash,
             "input_data": self.input_data,
             "candidate_map": self.candidate_map,
         }
+        # Historical schema 1.0/1.1 hashes must remain byte-for-byte stable.
+        if schema_version_at_least(self.schema_version, 1, 2):
+            payload.update(
+                {
+                    "constraint_manifest_hash": self.constraint_manifest_hash,
+                    "rule_manifest": self.rule_manifest,
+                    "fixed_student_limit": self.fixed_student_limit,
+                    "section_headcounts": self.section_headcounts,
+                    "meeting_headcounts": self.meeting_headcounts,
+                    "reserved_block_evidence": self.reserved_block_evidence,
+                    "instructor_daily_load_evidence": self.instructor_daily_load_evidence,
+                    "instance_characteristics": self.instance_characteristics,
+                }
+            )
+        return payload
+
+    def clean(self) -> None:
+        super().clean()
+        if self.fixed_student_limit != 50:
+            raise ValidationError({"fixed_student_limit": "The fixed student limit must be 50."})
+        if schema_version_at_least(self.schema_version, 1, 2):
+            errors: dict[str, str] = {}
+            if not self.constraint_manifest_hash:
+                errors["constraint_manifest_hash"] = "Schema 1.2 snapshots require a rule-manifest hash."
+            if not isinstance(self.rule_manifest, dict) or not self.rule_manifest:
+                errors["rule_manifest"] = "Schema 1.2 snapshots require frozen policy provenance."
+            if not isinstance(self.section_headcounts, dict) or not self.section_headcounts:
+                errors["section_headcounts"] = "Schema 1.2 snapshots require section enrollments."
+            if not isinstance(self.meeting_headcounts, dict) or not self.meeting_headcounts:
+                errors["meeting_headcounts"] = "Schema 1.2 snapshots require meeting headcounts."
+            if errors:
+                raise ValidationError(errors)
 
     def save(self, *args: Any, **kwargs: Any) -> None:
         if self.pk and type(self).objects.filter(pk=self.pk).exists():
             raise ValidationError("Problem snapshots are immutable; create a new snapshot instead.")
+        self.clean()
         self.snapshot_hash = canonical_sha256(self.hash_payload())
         super().save(*args, **kwargs)
 
@@ -1272,9 +1716,187 @@ class ExperimentStatus(models.TextChoices):
     FAILED = "FAILED", "Failed"
 
 
+class ExperimentMode(models.TextChoices):
+    EXPLORATORY = "EXPLORATORY", "Exploratory analysis"
+    FORMAL = "FORMAL", "Formal study"
+
+
+class StudyStatus(models.TextChoices):
+    DRAFT = "DRAFT", "Draft"
+    READY = "READY", "Validated and ready"
+    QUEUED = "QUEUED", "Queued"
+    RUNNING = "RUNNING", "Running"
+    COMPLETED = "COMPLETED", "Completed"
+    INVALID = "INVALID", "Invalid"
+    CANCELLED = "CANCELLED", "Cancelled"
+    FAILED = "FAILED", "Failed"
+
+
+class ExperimentStudy(TimestampedModel):
+    """A provenance-bound collection of nested scale instances and paired trials."""
+
+    FORMAL_SCALES = [25, 50, 75, 100]
+    FORMAL_SEEDS = list(range(1001, 1031))
+    FORMAL_ORDER_SEED = 20260824
+    FORMAL_DEADLINE_SECONDS = 300
+    FORMAL_CPU_LIMIT = 1
+    FORMAL_MEMORY_LIMIT_MB = 2048
+
+    name = models.CharField(max_length=200)
+    mode = models.CharField(
+        max_length=12,
+        choices=ExperimentMode.choices,
+        default=ExperimentMode.EXPLORATORY,
+    )
+    protocol_version = models.CharField(max_length=40, default="exploratory-v1")
+    status = models.CharField(max_length=10, choices=StudyStatus.choices, default=StudyStatus.DRAFT)
+    source_snapshot = models.ForeignKey(
+        ProblemSnapshot,
+        on_delete=models.PROTECT,
+        related_name="experiment_studies",
+    )
+    scale_percentages = models.JSONField(default=list)
+    seeds = models.JSONField(default=list)
+    order_seed = models.PositiveIntegerField(default=0)
+    deadline_seconds = models.PositiveIntegerField(default=300, validators=[MinValueValidator(1)])
+    cpu_limit = models.PositiveSmallIntegerField(default=1, validators=[MinValueValidator(1)])
+    memory_limit_mb = models.PositiveIntegerField(default=2048, validators=[MinValueValidator(1)])
+    warmups_per_algorithm_scale = models.PositiveSmallIntegerField(default=0)
+    protocol_manifest = models.JSONField(default=dict, blank=True)
+    manifest_hash = models.CharField(
+        max_length=64,
+        validators=[SHA256_VALIDATOR],
+        editable=False,
+        db_index=True,
+    )
+    protocol_integrity = models.JSONField(default=dict, blank=True)
+    invalid_reason = models.TextField(blank=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name="created_experiment_studies",
+    )
+    cancelled_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name="cancelled_experiment_studies",
+        null=True,
+        blank=True,
+    )
+    cancelled_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [models.Index(fields=["mode", "status", "created_at"])]
+        constraints = [
+            models.CheckConstraint(condition=Q(deadline_seconds__gte=1), name="study_deadline_positive"),
+            models.CheckConstraint(condition=Q(cpu_limit__gte=1), name="study_cpu_positive"),
+            models.CheckConstraint(condition=Q(memory_limit_mb__gte=1), name="study_memory_positive"),
+        ]
+
+    @property
+    def is_formal(self) -> bool:
+        return self.mode == ExperimentMode.FORMAL
+
+    def manifest_payload(self) -> dict[str, Any]:
+        return {
+            "mode": self.mode,
+            "protocol_version": self.protocol_version,
+            "source_snapshot_hash": (
+                self.source_snapshot.snapshot_hash if self.source_snapshot_id else None
+            ),
+            "scale_percentages": self.scale_percentages,
+            "seeds": self.seeds,
+            "order_seed": self.order_seed,
+            "deadline_seconds": self.deadline_seconds,
+            "cpu_limit": self.cpu_limit,
+            "memory_limit_mb": self.memory_limit_mb,
+            "warmups_per_algorithm_scale": self.warmups_per_algorithm_scale,
+            "protocol_manifest": self.protocol_manifest,
+        }
+
+    def clean(self) -> None:
+        super().clean()
+        errors: dict[str, str] = {}
+        if not isinstance(self.scale_percentages, list) or any(
+            type(value) is not int or not 1 <= value <= 100
+            for value in self.scale_percentages
+        ):
+            errors["scale_percentages"] = "Scales must be integer percentages from 1 to 100."
+        if not isinstance(self.seeds, list) or any(
+            type(value) is not int or value < 0 for value in self.seeds
+        ):
+            errors["seeds"] = "Seeds must be non-negative integers."
+        if len(self.seeds) != len(set(self.seeds)):
+            errors["seeds"] = "Study seeds must be unique."
+        if self.is_formal:
+            expected = {
+                "protocol_version": "formal-v2",
+                "scale_percentages": self.FORMAL_SCALES,
+                "seeds": self.FORMAL_SEEDS,
+                "order_seed": self.FORMAL_ORDER_SEED,
+                "deadline_seconds": self.FORMAL_DEADLINE_SECONDS,
+                "cpu_limit": self.FORMAL_CPU_LIMIT,
+                "memory_limit_mb": self.FORMAL_MEMORY_LIMIT_MB,
+                "warmups_per_algorithm_scale": 1,
+            }
+            for field_name, expected_value in expected.items():
+                if getattr(self, field_name) != expected_value:
+                    errors[field_name] = f"Formal protocol v2 requires {expected_value!r}."
+            if self.source_snapshot_id:
+                if not schema_version_at_least(self.source_snapshot.schema_version, 1, 2):
+                    errors["source_snapshot"] = "Formal studies require a schema 1.2 snapshot."
+                elif not self.source_snapshot.objective_profile.is_approved:
+                    errors["source_snapshot"] = "Formal studies require an approved objective profile."
+        if errors:
+            raise ValidationError(errors)
+
+    def _protocol_content(self) -> tuple[Any, ...]:
+        return tuple(self.manifest_payload().items()) + (self.created_by_id,)
+
+    def save(self, *args: Any, **kwargs: Any) -> None:
+        if self.pk:
+            previous = type(self).objects.filter(pk=self.pk).first()
+            if (
+                previous
+                and previous.batches.exists()
+                and self._protocol_content() != previous._protocol_content()
+                and not getattr(self, "_allow_status_update", False)
+            ):
+                raise ValidationError("A study protocol is immutable after instances are created.")
+        self.clean()
+        self.manifest_hash = canonical_sha256(self.manifest_payload())
+        super().save(*args, **kwargs)
+
+    def delete(self, *args: Any, **kwargs: Any) -> tuple[int, dict[str, int]]:
+        if self.pk and self.batches.exists():
+            raise ValidationError("Studies with frozen instances cannot be deleted.")
+        return super().delete(*args, **kwargs)
+
+    def __str__(self) -> str:
+        return self.name
+
+
 class ExperimentBatch(TimestampedModel):
     name = models.CharField(max_length=200)
+    study = models.ForeignKey(
+        ExperimentStudy,
+        on_delete=models.PROTECT,
+        related_name="batches",
+        null=True,
+        blank=True,
+    )
     snapshot = models.ForeignKey(ProblemSnapshot, on_delete=models.PROTECT, related_name="experiment_batches")
+    planned_scale_percentage = models.PositiveSmallIntegerField(
+        null=True,
+        blank=True,
+        validators=[MinValueValidator(1), MaxValueValidator(100)],
+    )
+    actual_scale_percentage = models.FloatField(
+        null=True,
+        blank=True,
+        validators=[MinValueValidator(0), MaxValueValidator(100)],
+    )
     status = models.CharField(max_length=10, choices=ExperimentStatus.choices, default=ExperimentStatus.DRAFT)
     seeds = models.JSONField(default=list)
     order_seed = models.PositiveIntegerField(default=0)
@@ -1306,7 +1928,10 @@ class ExperimentBatch(TimestampedModel):
     def _protocol_content(self) -> tuple[Any, ...]:
         return (
             self.name,
+            self.study_id,
             self.snapshot_id,
+            self.planned_scale_percentage,
+            self.actual_scale_percentage,
             self.seeds,
             self.order_seed,
             self.time_limit_seconds,
@@ -1357,6 +1982,21 @@ class RunStatus(models.TextChoices):
     FAILED = "FAILED", "Failed"
 
 
+class RunPurpose(models.TextChoices):
+    ROUTINE = "ROUTINE", "Routine scheduling"
+    TUNING = "TUNING", "Excluded tuning pilot"
+    WARMUP = "WARMUP", "Excluded warm-up"
+    DIAGNOSTIC = "DIAGNOSTIC", "Excluded diagnostic"
+    MEASURED = "MEASURED", "Measured formal trial"
+
+
+class FailureCategory(models.TextChoices):
+    ALGORITHM = "ALGORITHM", "Algorithm observation"
+    INFRASTRUCTURE = "INFRASTRUCTURE", "Infrastructure failure"
+    USER_CANCELLATION = "USER_CANCELLATION", "User cancellation"
+    UNCLASSIFIED = "UNCLASSIFIED", "Unclassified failure"
+
+
 class ScheduleRun(TimestampedModel):
     experiment_batch = models.ForeignKey(
         ExperimentBatch,
@@ -1368,9 +2008,32 @@ class ScheduleRun(TimestampedModel):
     snapshot = models.ForeignKey(ProblemSnapshot, on_delete=models.PROTECT, related_name="runs")
     algorithm = models.CharField(max_length=10, choices=SolverAlgorithm.choices)
     seed = models.PositiveIntegerField(default=0)
+    purpose = models.CharField(max_length=10, choices=RunPurpose.choices, default=RunPurpose.ROUTINE)
+    pair_attempt = models.PositiveSmallIntegerField(default=1, validators=[MinValueValidator(1)])
+    planned_order = models.PositiveSmallIntegerField(null=True, blank=True, validators=[MinValueValidator(1)])
+    actual_order = models.PositiveSmallIntegerField(null=True, blank=True, validators=[MinValueValidator(1)])
+    replacement_for = models.OneToOneField(
+        "self",
+        on_delete=models.PROTECT,
+        related_name="replacement_run",
+        null=True,
+        blank=True,
+    )
+    included_in_analysis = models.BooleanField(default=True)
+    exclusion_reason = models.CharField(max_length=255, blank=True)
     status = models.CharField(max_length=12, choices=RunStatus.choices, default=RunStatus.QUEUED)
     configuration = models.JSONField(default=dict, blank=True)
+    configuration_hash = models.CharField(
+        max_length=64,
+        validators=[SHA256_VALIDATOR],
+        blank=True,
+        db_index=True,
+    )
     task_id = models.CharField(max_length=255, blank=True, db_index=True)
+    dispatch_key = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    claim_token = models.UUIDField(null=True, blank=True, editable=False)
+    lease_expires_at = models.DateTimeField(null=True, blank=True)
+    heartbeat_at = models.DateTimeField(null=True, blank=True)
     requested_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.PROTECT,
@@ -1381,6 +2044,8 @@ class ScheduleRun(TimestampedModel):
     finished_at = models.DateTimeField(null=True, blank=True)
     first_feasible_seconds = models.FloatField(null=True, blank=True, validators=[MinValueValidator(0)])
     execution_seconds = models.FloatField(null=True, blank=True, validators=[MinValueValidator(0)])
+    process_cpu_seconds = models.FloatField(null=True, blank=True, validators=[MinValueValidator(0)])
+    peak_rss_mb = models.FloatField(null=True, blank=True, validators=[MinValueValidator(0)])
     objective_value = models.BigIntegerField(null=True, blank=True)
     best_bound = models.FloatField(null=True, blank=True)
     relative_gap = models.FloatField(null=True, blank=True, validators=[MinValueValidator(0)])
@@ -1389,18 +2054,45 @@ class ScheduleRun(TimestampedModel):
     diagnostics = models.JSONField(default=dict, blank=True)
     result_data = models.JSONField(default=dict, blank=True)
     error_message = models.TextField(blank=True)
+    failure_category = models.CharField(max_length=20, choices=FailureCategory.choices, blank=True)
+    failure_classified_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name="classified_schedule_run_failures",
+        null=True,
+        blank=True,
+    )
+    failure_classified_at = models.DateTimeField(null=True, blank=True)
+    source_commit = models.CharField(max_length=64, blank=True)
+    container_image = models.CharField(max_length=255, blank=True)
+    dependency_versions = models.JSONField(default=dict, blank=True)
+    host_identity = models.CharField(max_length=255, blank=True)
+    process_identity = models.CharField(max_length=255, blank=True)
+    worker_manifest = models.JSONField(default=dict, blank=True)
 
     class Meta:
         ordering = ["-created_at"]
         indexes = [
             models.Index(fields=["snapshot", "algorithm", "status"]),
             models.Index(fields=["experiment_batch", "seed", "algorithm"]),
+            models.Index(
+                fields=["status", "lease_expires_at"],
+                name="run_stale_lease_idx",
+            ),
         ]
         constraints = [
             models.UniqueConstraint(
-                fields=["experiment_batch", "algorithm", "seed"],
+                fields=["experiment_batch", "algorithm", "seed", "purpose", "pair_attempt"],
                 condition=Q(experiment_batch__isnull=False),
-                name="uniq_experiment_algorithm_seed",
+                name="uniq_experiment_algorithm_seed_attempt",
+            ),
+            models.UniqueConstraint(
+                fields=["experiment_batch", "actual_order"],
+                condition=Q(
+                    experiment_batch__isnull=False,
+                    actual_order__isnull=False,
+                ),
+                name="uniq_batch_actual_run_order",
             ),
             models.CheckConstraint(
                 condition=Q(execution_seconds__isnull=True) | Q(execution_seconds__gte=0),
@@ -1414,6 +2106,15 @@ class ScheduleRun(TimestampedModel):
                 condition=Q(relative_gap__isnull=True) | Q(relative_gap__gte=0),
                 name="run_gap_nonnegative",
             ),
+            models.CheckConstraint(
+                condition=Q(process_cpu_seconds__isnull=True) | Q(process_cpu_seconds__gte=0),
+                name="run_cpu_time_nonnegative",
+            ),
+            models.CheckConstraint(
+                condition=Q(peak_rss_mb__isnull=True) | Q(peak_rss_mb__gte=0),
+                name="run_peak_rss_nonnegative",
+            ),
+            models.CheckConstraint(condition=Q(pair_attempt__gte=1), name="run_pair_attempt_positive"),
         ]
 
     @property
@@ -1432,6 +2133,30 @@ class ScheduleRun(TimestampedModel):
             RunStatus.INFEASIBLE,
         }:
             errors["status"] = "The Genetic Algorithm cannot prove optimality or infeasibility."
+        if self.purpose in {RunPurpose.TUNING, RunPurpose.WARMUP, RunPurpose.DIAGNOSTIC}:
+            if self.included_in_analysis:
+                errors["included_in_analysis"] = f"{self.get_purpose_display()} runs must be excluded."
+            if not self.exclusion_reason:
+                errors["exclusion_reason"] = "Excluded runs require a reason."
+        if self.status == RunStatus.FAILED and not self.failure_category:
+            self.failure_category = FailureCategory.UNCLASSIFIED
+        if self.status == RunStatus.CANCELLED and not self.failure_category:
+            self.failure_category = FailureCategory.USER_CANCELLATION
+        if bool(self.failure_classified_by_id) != bool(self.failure_classified_at):
+            errors["failure_classified_at"] = "Failure classifier and classification time must be recorded together."
+        if (
+            self.failure_category == FailureCategory.INFRASTRUCTURE
+            and not self.failure_classified_by_id
+        ):
+            errors["failure_classified_by"] = "Infrastructure exclusions require an auditor."
+        if self.replacement_for_id:
+            original = self.replacement_for
+            if original.experiment_batch_id != self.experiment_batch_id:
+                errors["replacement_for"] = "Replacement and original must belong to the same batch."
+            elif original.seed != self.seed or original.algorithm != self.algorithm:
+                errors["replacement_for"] = "Replacement must preserve the seed and algorithm."
+            elif self.pair_attempt != original.pair_attempt + 1:
+                errors["pair_attempt"] = "Replacement attempt must immediately follow the original."
         if errors:
             raise ValidationError(errors)
 
@@ -1534,7 +2259,7 @@ class ValidationResult(TimestampedModel):
 class RunMetric(TimestampedModel):
     run = models.ForeignKey(ScheduleRun, on_delete=models.CASCADE, related_name="metrics")
     name = models.CharField(max_length=100)
-    value = models.DecimalField(max_digits=24, decimal_places=6)
+    value = models.DecimalField(max_digits=24, decimal_places=6, null=True, blank=True)
     unit = models.CharField(max_length=40, blank=True)
     metadata = models.JSONField(default=dict, blank=True)
 
@@ -1751,13 +2476,27 @@ class ScheduleAssignment(TimestampedModel):
         if errors:
             raise ValidationError(errors)
 
+    def _lock_editable_schedules(self) -> None:
+        schedule_ids = {self.schedule_id} if self.schedule_id else set()
+        if self.pk:
+            previous_id = type(self).objects.filter(pk=self.pk).values_list("schedule_id", flat=True).first()
+            if previous_id:
+                schedule_ids.add(previous_id)
+        for parent in ScheduleVersion.objects.select_for_update().filter(pk__in=schedule_ids).order_by("pk"):
+            if parent.assignments_are_immutable:
+                raise ValidationError("Assignments can be changed only while a schedule is in DRAFT status.")
+            if parent.pk == self.schedule_id:
+                self.schedule = parent
+
+    @transaction.atomic
     def save(self, *args: Any, **kwargs: Any) -> None:
+        self._lock_editable_schedules()
         self.clean()
         super().save(*args, **kwargs)
 
+    @transaction.atomic
     def delete(self, *args: Any, **kwargs: Any) -> tuple[int, dict[str, int]]:
-        if self.schedule.assignments_are_immutable:
-            raise ValidationError("Assignments can be deleted only while a schedule is in DRAFT status.")
+        self._lock_editable_schedules()
         return super().delete(*args, **kwargs)
 
     def __str__(self) -> str:
@@ -1947,13 +2686,6 @@ class ScheduleReview(TimestampedModel):
 
     class Meta:
         ordering = ["schedule", "college", "created_at"]
-        constraints = [
-            models.UniqueConstraint(
-                fields=["schedule", "college"],
-                condition=Q(status=ReviewStatus.ENDORSED),
-                name="uniq_schedule_college_endorsement",
-            ),
-        ]
         indexes = [models.Index(fields=["schedule", "college", "status"])]
 
     def clean(self) -> None:

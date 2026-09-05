@@ -16,10 +16,15 @@ from scheduler import models
 
 SCALING_PERCENTAGES = (25, 50, 75, 100)
 DEFAULT_SCALING_SEED = 20260824
-SCALING_PROTOCOL_VERSION = "1.0"
+SCALING_PROTOCOL_VERSION = "1.1"
 _SCALING_METADATA_KEYS = {
     "scaling_actual_event_percentage",
     "scaling_actual_offering_percentage",
+    "scaling_forced_offering_overage",
+    "scaling_locked_event_count",
+    "scaling_locked_offering_count",
+    "scaling_locked_retention_satisfied",
+    "scaling_retained_locked_offering_count",
     "scaling_percentage",
     "scaling_protocol_version",
     "scaling_seed",
@@ -40,6 +45,10 @@ class ScalingLevelPlan:
     selected_offering_ids: tuple[str, ...]
     selected_event_ids: tuple[str, ...]
     selected_lock_count: int
+    locked_offering_count: int
+    retained_locked_offering_count: int
+    forced_offering_overage: int
+    locked_retention_satisfied: bool
     context_counts: tuple[tuple[str, int], ...]
     selection_hash: str
 
@@ -58,6 +67,9 @@ class ScalingPlan:
     seed: int
     full_event_count: int
     full_offering_count: int
+    full_locked_event_count: int
+    full_locked_offering_count: int
+    locked_offering_ids: tuple[str, ...]
     applicable_context_counts: tuple[tuple[str, int], ...]
     offering_order: tuple[str, ...]
     levels: tuple[ScalingLevelPlan, ...]
@@ -70,6 +82,9 @@ class ScalingPlan:
             "seed": self.seed,
             "full_event_count": self.full_event_count,
             "full_offering_count": self.full_offering_count,
+            "full_locked_event_count": self.full_locked_event_count,
+            "full_locked_offering_count": self.full_locked_offering_count,
+            "locked_offering_ids": list(self.locked_offering_ids),
             "applicable_context_counts": dict(self.applicable_context_counts),
             "offering_order": list(self.offering_order),
             "levels": [level.to_dict() for level in self.levels],
@@ -90,13 +105,6 @@ def plan_scaling_snapshots(
         raise ValueError("the full snapshot contains no events")
     event_offerings = _event_offering_map(full_snapshot, events)
     contexts = _offering_contexts(full_snapshot, set(event_offerings.values()))
-    events_by_offering: dict[str, list[str]] = {
-        offering_id: [] for offering_id in contexts
-    }
-    for event in events:
-        event_id = _event_id(event)
-        events_by_offering[event_offerings[event_id]].append(event_id)
-    offering_order = _multilabel_stratified_order(contexts, seed)
     full_event_count = len(events)
     full_context_counts: Counter[str] = Counter(
         context for offering_contexts in contexts.values() for context in offering_contexts
@@ -105,19 +113,43 @@ def plan_scaling_snapshots(
         str(lock.get("event_id"))
         for lock in full_snapshot.input_data.get("locked_assignments", ())
     }
+    unknown_locked_event_ids = locked_event_ids - set(event_offerings)
+    if unknown_locked_event_ids:
+        raise ValueError(
+            "locked assignments reference missing events: "
+            + ", ".join(sorted(unknown_locked_event_ids))
+        )
+    locked_offering_ids = {
+        event_offerings[event_id] for event_id in locked_event_ids
+    }
+    offering_order = _multilabel_stratified_order(
+        contexts,
+        seed,
+        required_offering_ids=locked_offering_ids,
+    )
 
     levels: list[ScalingLevelPlan] = []
     previous_offering_count = 0
     for percentage in SCALING_PERCENTAGES:
         target_offering_count = math.ceil(len(offering_order) * percentage / 100)
         target_event_count = math.ceil(full_event_count * percentage / 100)
-        selected_offerings = list(offering_order[:target_offering_count])
+        selected_offering_count = max(
+            target_offering_count,
+            len(locked_offering_ids),
+        )
+        selected_offerings = list(offering_order[:selected_offering_count])
         if percentage == 100:
             selected_offerings = list(offering_order)
         if len(selected_offerings) < previous_offering_count:  # pragma: no cover - invariant guard
             raise AssertionError("scaling levels must be nested")
         previous_offering_count = len(selected_offerings)
         selected_set = set(selected_offerings)
+        retained_locked_offering_count = len(selected_set & locked_offering_ids)
+        locked_retention_satisfied = (
+            retained_locked_offering_count == len(locked_offering_ids)
+        )
+        if not locked_retention_satisfied:  # pragma: no cover - invariant guard
+            raise AssertionError("every scaling level must retain all locked offerings")
         selected_event_ids = tuple(
             _event_id(event)
             for event in events
@@ -136,6 +168,7 @@ def plan_scaling_snapshots(
                 "percentage": percentage,
                 "selected_offering_ids": selected_offerings,
                 "selected_event_ids": selected_event_ids,
+                "locked_offering_ids": sorted(locked_offering_ids),
             }
         )
         levels.append(
@@ -154,6 +187,13 @@ def plan_scaling_snapshots(
                 selected_offering_ids=tuple(selected_offerings),
                 selected_event_ids=selected_event_ids,
                 selected_lock_count=len(set(selected_event_ids) & locked_event_ids),
+                locked_offering_count=len(locked_offering_ids),
+                retained_locked_offering_count=retained_locked_offering_count,
+                forced_offering_overage=max(
+                    0,
+                    len(selected_offerings) - target_offering_count,
+                ),
+                locked_retention_satisfied=locked_retention_satisfied,
                 context_counts=tuple(sorted(selected_context_counts.items())),
                 selection_hash=selection_hash,
             )
@@ -164,6 +204,9 @@ def plan_scaling_snapshots(
         seed=seed,
         full_event_count=full_event_count,
         full_offering_count=len(offering_order),
+        full_locked_event_count=len(locked_event_ids),
+        full_locked_offering_count=len(locked_offering_ids),
+        locked_offering_ids=tuple(sorted(locked_offering_ids)),
         applicable_context_counts=tuple(sorted(full_context_counts.items())),
         offering_order=offering_order,
         levels=tuple(levels),
@@ -191,12 +234,47 @@ def create_scaling_snapshots(
             snapshots[level.percentage] = full_snapshot
             continue
         input_data, candidate_map = _project_snapshot_payload(full_snapshot, level, seed)
+        selected_sections = {
+            str(section_id)
+            for event in input_data.get("events", ())
+            for section_id in event.get("section_ids", ())
+        }
+        selected_instructors = {
+            str(instructor_id)
+            for event in input_data.get("events", ())
+            for instructor_id in event.get("instructor_ids", ())
+        }
         values = {
             "revision": full_snapshot.revision,
             "objective_profile": full_snapshot.objective_profile,
             "schema_version": full_snapshot.schema_version,
             "input_data": input_data,
             "candidate_map": candidate_map,
+            "constraint_manifest_hash": full_snapshot.constraint_manifest_hash,
+            "rule_manifest": copy.deepcopy(full_snapshot.rule_manifest),
+            "fixed_student_limit": 50,
+            "section_headcounts": {
+                str(section_id): count
+                for section_id, count in full_snapshot.section_headcounts.items()
+                if str(section_id) in selected_sections
+            },
+            "meeting_headcounts": {
+                event_id: count
+                for event_id, count in full_snapshot.meeting_headcounts.items()
+                if event_id in set(level.selected_event_ids)
+            },
+            "reserved_block_evidence": copy.deepcopy(
+                full_snapshot.reserved_block_evidence
+            ),
+            "instructor_daily_load_evidence": [
+                copy.deepcopy(row)
+                for row in full_snapshot.instructor_daily_load_evidence
+                if str(row.get("instructor_id")) in selected_instructors
+            ],
+            "instance_characteristics": _project_instance_characteristics(
+                input_data,
+                candidate_map,
+            ),
             "event_count": level.selected_event_count,
             "candidate_count": sum(len(candidates) for candidates in candidate_map.values()),
             "preprocessing_seconds": 0.0,
@@ -257,13 +335,14 @@ def _offering_contexts(
             is_active=True,
             external_key__in=offering_ids,
         )
+        .select_related("offering_department__college")
         .prefetch_related(Prefetch("section_links", queryset=section_links))
         .order_by("external_key")
     )
     contexts: dict[str, tuple[str, ...]] = {}
     for offering in offerings:
         labels = {
-            f"{link.program_subject.authoritative_college_id}:{link.program_subject.classification}"
+            f"{offering.offering_department.college_id}:{link.program_subject.classification}"
             for link in offering.section_links.all()
         }
         if not labels:
@@ -278,24 +357,34 @@ def _offering_contexts(
 
 
 def _multilabel_stratified_order(
-    contexts: dict[str, tuple[str, ...]], seed: int
+    contexts: dict[str, tuple[str, ...]],
+    seed: int,
+    *,
+    required_offering_ids: set[str] | None = None,
 ) -> tuple[str, ...]:
-    """Greedily minimize proportional error over every applicable context."""
+    """Create a nested stratified order with mandatory offerings first."""
 
     total = len(contexts)
+    required = set(required_offering_ids or ())
+    unknown_required = required - set(contexts)
+    if unknown_required:
+        raise ValueError(
+            "required scaling offerings are missing from the snapshot: "
+            + ", ".join(sorted(unknown_required))
+        )
     frequencies: Counter[str] = Counter(
         context for labels in contexts.values() for context in labels
     )
     selected_counts: Counter[str] = Counter()
-    remaining = set(contexts)
+    remaining_required = set(required)
+    remaining_optional = set(contexts) - required
     order: list[str] = []
     stable_ranks = {
-        offering_id: hashlib.sha256(
-            f"{seed}\0{offering_id}".encode()
-        ).hexdigest()
+        offering_id: hashlib.sha256(f"{seed}\0{offering_id}".encode()).hexdigest()
         for offering_id in contexts
     }
-    while remaining:
+
+    def append_best(remaining: set[str]) -> None:
         selected_total = len(order) + 1
 
         def proportional_error_delta(
@@ -312,6 +401,11 @@ def _multilabel_stratified_order(
         order.append(selected)
         selected_counts.update(contexts[selected])
         remaining.remove(selected)
+
+    while remaining_required:
+        append_best(remaining_required)
+    while remaining_optional:
+        append_best(remaining_optional)
     return tuple(order)
 
 
@@ -332,6 +426,17 @@ def _project_snapshot_payload(
         for lock in input_data.get("locked_assignments", ())
         if str(lock.get("event_id")) in selected_event_ids
     ]
+    selected_instructor_ids = {
+        str(instructor_id)
+        for event in input_data["events"]
+        for instructor_id in event.get("instructor_ids", ())
+    }
+    if "instructor_evidence" in input_data:
+        input_data["instructor_evidence"] = [
+            row
+            for row in input_data["instructor_evidence"]
+            if str(row.get("instructor_id")) in selected_instructor_ids
+        ]
     metadata = [
         list(item)
         for item in input_data.get("metadata", ())
@@ -343,6 +448,17 @@ def _project_snapshot_payload(
             [
                 "scaling_actual_offering_percentage",
                 str(level.actual_offering_percentage),
+            ],
+            ["scaling_forced_offering_overage", str(level.forced_offering_overage)],
+            ["scaling_locked_event_count", str(level.selected_lock_count)],
+            ["scaling_locked_offering_count", str(level.locked_offering_count)],
+            [
+                "scaling_retained_locked_offering_count",
+                str(level.retained_locked_offering_count),
+            ],
+            [
+                "scaling_locked_retention_satisfied",
+                str(level.locked_retention_satisfied).lower(),
             ],
             ["scaling_percentage", str(level.percentage)],
             ["scaling_protocol_version", SCALING_PROTOCOL_VERSION],
@@ -368,3 +484,89 @@ def _event_id(event: dict[str, Any]) -> str:
     if event_id in (None, ""):
         raise ValueError("every snapshot event must have an event_id")
     return str(event_id)
+
+
+def _project_instance_characteristics(
+    input_data: dict[str, Any],
+    candidate_map: dict[str, Any],
+) -> dict[str, Any]:
+    """Record separate, auditable difficulty descriptors without blending them."""
+
+    events = list(input_data.get("events", ()))
+    room_evidence = list(input_data.get("room_evidence", ()))
+    selected_instructor_ids = {
+        str(instructor_id)
+        for event in events
+        for instructor_id in event.get("instructor_ids", ())
+    }
+    instructor_evidence = [
+        row
+        for row in input_data.get("instructor_evidence", ())
+        if str(row.get("instructor_id")) in selected_instructor_ids
+    ]
+    time_atoms = list(input_data.get("time_atoms", ()))
+    candidate_counts = [len(candidate_map.get(_event_id(event), ())) for event in events]
+    section_count_by_id = {
+        str(section_id): int(count)
+        for event in events
+        for section_id, count in event.get("section_headcounts", ())
+    }
+    section_counts = list(section_count_by_id.values())
+    required_atoms = sum(int(event.get("duration_atoms", 0)) for event in events)
+    available_room_atoms = sum(
+        len(row.get("available_atom_ids", ())) for row in room_evidence
+    )
+    denominator = len(events) * len(room_evidence) * len(time_atoms)
+
+    def distribution(values: list[int]) -> dict[str, float | int]:
+        ordered = sorted(values)
+        if not ordered:
+            return {"min": 0, "median": 0, "mean": 0, "max": 0}
+        middle = len(ordered) // 2
+        median_value = (
+            ordered[middle]
+            if len(ordered) % 2
+            else (ordered[middle - 1] + ordered[middle]) / 2
+        )
+        return {
+            "min": ordered[0],
+            "median": median_value,
+            "mean": sum(ordered) / len(ordered),
+            "max": ordered[-1],
+        }
+
+    availability_ratios = [
+        len(row.get("available_atom_ids", ())) / max(1, len(time_atoms))
+        for row in (*room_evidence, *instructor_evidence)
+    ]
+    return {
+        "offerings": len({event.get("offering_id") for event in events}),
+        "meetings": len(events),
+        "sections": len(
+            {
+                str(section_id)
+                for event in events
+                for section_id in event.get("section_ids", ())
+            }
+        ),
+        "instructors": len(selected_instructor_ids),
+        "rooms": len(room_evidence),
+        "time_atoms": len(time_atoms),
+        "locks": len(input_data.get("locked_assignments", ())),
+        "candidates": {"total": sum(candidate_counts), **distribution(candidate_counts)},
+        "required_meeting_atoms": required_atoms,
+        "available_room_atoms": available_room_atoms,
+        "candidate_domain_density": sum(candidate_counts) / denominator if denominator else 0,
+        "room_time_demand_pressure": (
+            required_atoms / available_room_atoms if available_room_atoms else None
+        ),
+        "availability_density": (
+            sum(availability_ratios) / len(availability_ratios)
+            if availability_ratios
+            else 0
+        ),
+        "section_headcounts": distribution(section_counts),
+        "meetings_approaching_50": sum(
+            int(event.get("meeting_headcount", 0)) >= 45 for event in events
+        ),
+    }

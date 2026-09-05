@@ -2,27 +2,33 @@
 
 {% block content %}
 <header class="page-header">
-  <div><p class="eyebrow">Optimization result</p><h1>Run details</h1><p>Trace the dataset, configuration, feasibility, timing, and stopping condition for this result.</p></div>
-  <div class="page-actions"><a class="button button--secondary" href="{% url 'scheduler:runs' %}">Back to runs</a>{% if run %}<a class="button button--primary" href="{% url 'scheduler:run-comparison' %}?left={{ run.id|urlencode }}">Compare this run</a>{% if run.can_cancel and is_central %}<form action="{% url 'api:run-cancel' run.id %}" method="post" data-api-form data-success-url="{% url 'scheduler:run-detail' run.id %}">{% csrf_token %}<button class="button button--secondary" type="submit" data-confirm="Cancel this queued or running solver job?">Cancel run</button></form>{% endif %}{% endif %}</div>
+  <div><p class="eyebrow">Generation result</p><h1>Schedule run result</h1><p>See whether generation completed and what to do next.</p></div>
+  <div class="page-actions"><a class="button button--secondary" href="{% url 'scheduler:runs' %}">Back to generated schedules</a>{% if run and run.schedule_id %}<a class="button button--primary" href="{% url 'scheduler:schedules' %}?schedule={{ run.schedule_id|urlencode }}">Open timetable</a>{% endif %}{% if run.can_cancel and is_central %}<form action="{% url 'api:run-cancel' run.id %}" method="post" data-api-form data-success-url="{% url 'scheduler:run-detail' run.id %}">{% csrf_token %}<button class="button button--secondary" type="submit" data-confirm="Cancel this running schedule job?">Cancel run</button></form>{% endif %}</div>
 </header>
 
 {% if run %}
   <section class="run-hero">
-    <div><span class="status status--{{ run.status_class }}">{{ run.status }}</span><p class="eyebrow">{{ run.algorithm }}</p><h2>{{ run.term }}</h2><p>Run identifier <code>{{ run.id }}</code></p></div>
+    <div><span class="status status--{{ run.status_class }}">{{ run.status }}</span><p class="eyebrow">{{ run.algorithm }}</p><h2>{{ run.term }}</h2><p>Attempt #{{ run.id }} · Random seed {{ run.seed }}</p></div>
     <dl class="hero-facts"><div><dt>Started</dt><dd>{{ run.started_at|date:'M j, Y · H:i:s'|default:'—' }}</dd></div><div><dt>Finished</dt><dd>{{ run.finished_at|date:'M j, Y · H:i:s'|default:'—' }}</dd></div></dl>
   </section>
-  <section class="metric-grid" aria-label="Run metrics">
-    <article class="metric-card"><span>Execution time</span><strong>{{ run.runtime }}</strong><small>Total measured solver runtime</small></article>
-    <article class="metric-card"><span>First feasible</span><strong>{{ run.first_feasible }}</strong><small>Time until all hard rules passed</small></article>
-    <article class="metric-card"><span>Hard violations</span><strong>{{ run.hard_violations }}</strong><small>Must be zero for feasibility</small></article>
-    <article class="metric-card"><span>Objective</span><strong>{{ run.objective }}</strong><small>Normalized quality/penalty result</small></article>
+
+  <section class="callout {% if run.schedule_id %}callout--success{% elif run.can_cancel %}callout--info{% else %}callout--warning{% endif %}" aria-label="Generation outcome"><div><strong>{{ run.outcome }}</strong>
+    {% if run.status_class == 'timeout' %}<p>Try the recommended generation goal with more time. Check rooms, instructor availability and locked classes if repeated attempts find no timetable.</p>{% endif %}
+    {% if not run.schedule_id and not run.can_cancel and is_central %}<p><a class="button button--secondary" href="{% url 'scheduler:runs' %}?retry={{ run.id|urlencode }}#new-run">{% if run.status_class == 'timeout' %}Try again with more time{% else %}Set up a new attempt{% endif %}</a> <a class="table-link" href="{% url 'scheduler:imports' %}">Prepare Data</a></p>{% endif %}
+    {% if run.can_cancel %}<p><a class="button button--secondary" href="{% url 'scheduler:run-detail' run.id %}">Refresh result</a></p>{% endif %}
+  </div></section>
+
+  <section class="metric-grid metric-grid--quiet" aria-label="Generation result summary">
+    <article class="metric-card"><span>Run time</span><strong>{{ run.runtime }}</strong></article>
+    <article class="metric-card"><span>First valid result</span><strong>{{ run.first_feasible }}</strong></article>
+    <article class="metric-card"><span>Rule violations</span><strong>{{ run.hard_violations }}</strong></article>
+    <article class="metric-card"><span>Quality penalty</span><strong>{{ run.objective }}</strong></article>
   </section>
-  <div class="content-grid">
-    <section class="panel"><div class="panel__header"><div><p class="eyebrow">Reproducibility</p><h2>Recorded configuration</h2></div></div><dl class="definition-list"><div><dt>Dataset snapshot</dt><dd>{{ run.snapshot }}</dd></div><div><dt>Random seed</dt><dd>{{ run.seed }}</dd></div><div><dt>Problem hash</dt><dd><code>{{ run.problem_hash|default:'Not recorded' }}</code></dd></div><div><dt>Configuration hash</dt><dd><code>{{ run.config_hash|default:'Not recorded' }}</code></dd></div></dl></section>
-    <section class="panel"><div class="panel__header"><div><p class="eyebrow">Termination</p><h2>Solver outcome</h2></div></div><dl class="definition-list"><div><dt>Status</dt><dd><span class="status status--{{ run.status_class }}">{{ run.status }}</span></dd></div><div><dt>Stopping reason</dt><dd>{{ run.stopping_reason }}</dd></div><div><dt>Retries</dt><dd>{{ run.retry_count }}</dd></div><div><dt>Room-slot utilization</dt><dd>{{ run.room_utilization }}</dd></div></dl></section>
-  </div>
-  {% if run.status_class == 'infeasible' or run.status_class == 'no-solution' or run.status_class == 'error' %}<section class="callout callout--warning"><div><strong>No invalid timetable was promoted.</strong><p>Inspect import errors, locks, availability, and room authorization diagnostics. “Infeasible” describes the current frozen requirements; it is not permission to relax a hard constraint silently.</p></div></section>{% endif %}
+
+  <section class="panel"><div class="panel__header"><div><p class="eyebrow">Outcome</p><h2>Generation details</h2></div></div><dl class="definition-list"><div><dt>Status</dt><dd><span class="status status--{{ run.status_class }}">{{ run.status }}</span></dd></div><div><dt>Generation goal</dt><dd>{% if run.first_feasible_only %}Find a valid timetable{% else %}Improve timetable quality{% endif %}</dd></div><div><dt>Time limit</dt><dd>{{ run.time_limit }}</dd></div><div><dt>Room and time use</dt><dd>{{ run.room_utilization }}</dd></div></dl></section>
+
+  <details class="panel technical-details"><summary>Technical and reproducibility details</summary><dl class="definition-list"><div><dt>Solver stopping reason</dt><dd>{{ run.stopping_reason }}</dd></div><div><dt>Dataset</dt><dd>{{ run.snapshot }}</dd></div><div><dt>Run identifier</dt><dd><code>{{ run.id }}</code></dd></div><div><dt>Random seed</dt><dd>{{ run.seed }}</dd></div><div><dt>Problem hash</dt><dd><code>{{ run.problem_hash|default:'Not recorded' }}</code></dd></div><div><dt>Configuration hash</dt><dd><code>{{ run.config_hash|default:'Not recorded' }}</code></dd></div><div><dt>Retries</dt><dd>{{ run.retry_count }}</dd></div></dl><a class="table-link" href="{% url 'scheduler:run-comparison' %}?left={{ run.id|urlencode }}">Compare this run in Research tools</a></details>
 {% else %}
-  <section class="empty-state empty-state--prominent"><span class="empty-state__icon" aria-hidden="true">?</span><div><h2>Run not available</h2><p>No schedule run with identifier <code>{{ run_id }}</code> is available in the current database.</p></div><a class="button button--primary" href="{% url 'scheduler:runs' %}">View run history</a></section>
+  <section class="empty-state empty-state--prominent"><span class="empty-state__icon" aria-hidden="true">?</span><div><h2>Run not available</h2><p>This schedule run could not be found.</p></div><a class="button button--primary" href="{% url 'scheduler:runs' %}">View generated schedules</a></section>
 {% endif %}
 {% endblock %}

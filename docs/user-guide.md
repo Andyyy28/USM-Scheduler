@@ -28,7 +28,13 @@ Both optimization engines use the same frozen input:
 
 The system checks instructor, section, and room conflicts; availability; contiguous duration; laboratory capabilities; college or offering-unit room authorization; distinct-day rules; and active locks. Faculty preferences, internal vacant periods, and daily-load balance may be scored as soft objectives.
 
-Room capacity, individual student elective conflicts, examinations, walking distance, inter-campus travel, and instructor assignment are outside the thesis baseline.
+Every section and combined meeting uses a fixed maximum of 50 students; exactly
+50 is accepted and 51 or more blocks formal snapshot creation. This applies to
+classrooms, laboratories, and special-purpose rooms. It is not chair, floor-area,
+or variable room-capacity validation, so participating rooms must be
+administratively prevalidated. Individual student elective conflicts,
+examinations, walking distance, inter-campus travel, and instructor assignment
+remain outside the thesis baseline.
 
 ## 2. Roles and authority
 
@@ -160,14 +166,21 @@ All demonstration names and codes are fictional research fixtures. They are not 
 ### 5.2 Full synthetic trial workbook
 
 For a more realistic hands-on test, sign in as `demo-scheduler`, open **Data
-import**, and choose **Download test workbook**. The same deterministic file is
-tracked at `examples/USM-Scheduler-Synthetic-Trial-v1.xlsx` and can be rebuilt
-with:
+import**, select the target term under **Practice workbook**, and choose
+**Download practice workbook**. The schema 1.1 file freezes that term's existing
+approved policy hashes; import it into the same term. The downloader never
+creates or approves policies. After `seed_demo`, it can also be generated with:
 
 ```powershell
 python manage.py create_trial_workbook `
-  --output .\examples\USM-Scheduler-Synthetic-Trial-v1.xlsx
+  --term-id 1 --output .\USM-Scheduler-Synthetic-Trial-v2.xlsx
 ```
+
+The tracked `examples/USM-Scheduler-Synthetic-Trial-v1.xlsx` remains a legacy
+exploratory fixture. It lacks thesis-v2 enrollment and policy evidence and must
+not be used for the formal pilot. The v2 fixture requires approved v1 policies
+`FIXED_STUDENT_LIMIT_50`, `INSTRUCTOR_DAILY_LOAD`, and `RECURRING_RESERVED_BLOCKS`
+for the selected term; the demo setup labels these policies as synthetic.
 
 The workbook contains 14 required meetings across five sections and 11 course
 offerings. It deliberately exercises:
@@ -205,13 +218,14 @@ To try it:
 
 After signing in, the left navigation contains:
 
-- **Overview:** current term, data counts, recent runs, and pending reviews;
-- **Academic terms:** term registry, term cloning, and revision finalization;
-- **Generate schedule:** preflight, individual solver runs, experiment batches, and run history;
+- **Home:** current term, data counts, recent runs, and pending reviews;
+- **Academic Terms:** term registry, term cloning, and revision finalization;
+- **Generate Schedule:** preflight, individual solver runs, and run history;
 - **Timetables:** versioned assignments, validation, locking, review, approval, and export;
-- **Data import:** XLSX template, synthetic trial download, preview, errors, and transactional commit (central roles only);
+- **Prepare Data:** XLSX template, term-specific synthetic trial download, preview, errors, and transactional commit (central roles only);
 - **Reviews:** college endorsement and change-request queue;
 - **Help and user guide:** role guidance, solver-status explanations, downloads, and troubleshooting; and
+- **Research tools:** separate Formal Study and Exploratory Analysis workflows, outcome tables, excluded diagnostic traces, and evidence downloads; and
 - **Django administration:** visible to staff administrators through the user menu.
 
 The interface supports keyboard navigation and responsive layouts. Use the “Skip to main content” link when navigating by keyboard.
@@ -291,17 +305,18 @@ Record the snapshot hash when producing thesis results. CP-SAT and GA are compar
 
 ## 11. Generate a test schedule
 
-For a fast demonstration, use one individual run before creating the full experiment:
+1. Open **Generate Schedule** and choose your **Checked semester data** in step 2.
+2. Keep **Constraint solver (recommended)**, or choose **Genetic Algorithm**.
+3. Keep **Find a valid timetable (recommended)** as the generation goal. Both methods stop once a complete timetable passes independent validation. This goal does not optimize the quality score.
+4. Keep **300 seconds** (5 minutes) and random seed **42** to start.
+5. Select **Generate timetable**. In local demonstration mode, keep the page open until the result appears. With a separate worker, refresh the result page to check progress.
+6. When the result says **Schedule found**, select **Open timetable** to review it.
 
-1. Open **Generate schedule → Step 2 · Generate — Generate a candidate schedule**.
-2. Select the snapshot created in the previous step.
-3. Select `CP-SAT`.
-4. Enter seed `1001` and a 30- or 60-second limit for the small demonstration.
-5. Select **Start schedule generation**.
-6. Repeat with `Genetic Algorithm`, using the same snapshot, seed, and limit.
-7. Open each entry in **Run history** to view its result.
+To keep searching for fewer gaps and better preferences, choose **Use the full time to improve timetable quality**. A valid result found within the time limit remains a success even when the solver cannot prove that it is best.
 
-Do not use a short demonstration run as thesis evidence. The controlled protocol uses 300 seconds, fixed seeds `1001–1030`, and one worker for every measured run.
+If the limit ends before a timetable is found, select **Try again with more time**. This copies the checked data, method, and random seed into a new attempt and increases the limit (up to 3600 seconds). An impossible combination of rules needs corrected data, not just more time. A system error has separate guidance and a run identifier for the administrator.
+
+Routine first-feasible runs are excluded from research analysis. Use **Research tools** for full-budget comparisons with frozen objectives, seeds, worker counts, and equal time limits. Neither practice timings nor a quick timetable establishes a thesis result.
 
 ### Status reference
 
@@ -309,12 +324,12 @@ Do not use a short demonstration run as thesis evidence. The controlled protocol
 |---|---|---|
 | Queued | Waiting for the worker | Wait; inspect worker logs if it remains queued |
 | Running | Solver search is active | Avoid launching competing benchmark work |
-| Feasible | Zero-hard solution found; optimality not proven | Review quality and institutional correctness |
-| Optimal | CP-SAT proved the objective optimal for this run | Still requires human review |
-| Infeasible | CP-SAT proved the frozen model infeasible | Diagnose data, policy, and locks in a new revision |
-| No solution | Search returned no feasible solution within its conditions | Do not call the instance infeasible |
-| Timeout | Time budget ended | Inspect whether a validated incumbent exists; preserve the record |
-| Failed | Infrastructure or application error | Inspect logs and correct the infrastructure cause |
+| Schedule found (FEASIBLE) | Zero-hard solution found; optimality not proven | Review quality and institutional correctness |
+| Best schedule found (OPTIMAL) | CP-SAT proved the objective optimal for this run | Still requires human review |
+| Conflicting scheduling rules (INFEASIBLE) | CP-SAT proved the frozen model infeasible | Diagnose data, policy, and locks in a new revision |
+| No timetable found (NO_SOLUTION) | Search returned no feasible solution within its conditions | Do not call the instance infeasible |
+| Time limit reached (TIMEOUT) | No validated timetable was found before the limit | Try more time or revise restrictive availability and locks |
+| Generation failed (FAILED) | Infrastructure or application error | Inspect logs and correct the infrastructure cause |
 | Canceled | Authorized user stopped the job | Preserve it as a canceled record |
 
 GA must never be described as proving optimality or infeasibility.

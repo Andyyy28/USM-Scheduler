@@ -1,0 +1,223 @@
+{% extends 'scheduler/base.html' %}
+
+{% block content %}
+<header class="page-header formal-report-header">
+  <div>
+    <p class="eyebrow">Formal Study · {{ study.protocol_version }}</p>
+    <h1>{{ study.name }}</h1>
+    <p>CP-SAT versus Genetic Algorithm across four nested demand levels. Values below are research evidence, not routine scheduling scores.</p>
+  </div>
+  <div class="page-actions">
+    <a class="button button--secondary" href="{% url 'scheduler:research' %}?workflow=formal">Back to Formal Study</a>
+    {% if is_central %}<a class="button button--primary" href="{% url 'scheduler:formal-study-evidence' study.pk %}">Download evidence bundle</a>{% endif %}
+  </div>
+</header>
+
+{% if is_central %}
+  {% if study.status == 'DRAFT' or study.status == 'INVALID' %}
+  <section class="formal-study-controls" aria-labelledby="formal-study-controls-title">
+    <div>
+      <p class="eyebrow">Authorized study control</p>
+      <h2 id="formal-study-controls-title">Run the formal preflight</h2>
+      <p>The study cannot enter the benchmark queue until every frozen rule, input, domain, solver profile, and protocol hash verifies.</p>
+    </div>
+    <form action="{% url 'api:formal-study-validate' study.pk %}" method="post" data-api-form data-success-url="{% url 'scheduler:formal-study-detail' study.pk %}" data-success-message="Formal preflight completed. Refreshing the evidence gate…">
+      {% csrf_token %}
+      <div class="form-status" data-form-status aria-live="polite"></div>
+      <button class="button button--primary" type="submit">Validate formal study</button>
+    </form>
+  </section>
+  {% elif study.status == 'READY' %}
+  <section class="formal-study-controls formal-study-controls--ready" aria-labelledby="formal-study-controls-title">
+    <div>
+      <p class="eyebrow">Protocol preflight passed</p>
+      <h2 id="formal-study-controls-title">Queue the sequential benchmark</h2>
+      <p>This dispatches all frozen observations to the one-CPU, 2 GB benchmark worker. The planned randomized order and all excluded runs remain auditable.</p>
+    </div>
+    <form action="{% url 'api:formal-study-queue' study.pk %}" method="post" data-api-form data-success-url="{% url 'scheduler:formal-study-detail' study.pk %}" data-success-message="Formal benchmark queued. Refreshing run status…">
+      {% csrf_token %}
+      <div class="form-status" data-form-status aria-live="polite"></div>
+      <button class="button button--primary" type="submit" data-confirm="Queue the complete 260-run formal benchmark sequentially?">Queue formal study</button>
+    </form>
+  </section>
+  {% elif study.status == 'QUEUED' or study.status == 'RUNNING' %}
+  <section class="formal-study-controls formal-study-controls--active" aria-labelledby="formal-study-controls-title">
+    <div>
+      <p class="eyebrow">Benchmark in progress</p>
+      <h2 id="formal-study-controls-title">Formal execution is active</h2>
+      <p>Cancellation is audited, excludes active observations, invalidates formal inference, and cannot be used to declare a winner.</p>
+    </div>
+    <form action="{% url 'api:formal-study-cancel' study.pk %}" method="post" data-api-form data-success-url="{% url 'scheduler:formal-study-detail' study.pk %}" data-success-message="Formal study cancelled. Refreshing the audit state…">
+      {% csrf_token %}
+      <div class="form-status" data-form-status aria-live="polite"></div>
+      <button class="button button--secondary formal-study-controls__danger" type="submit" data-confirm="Cancel this formal study? This permanently closes its conclusion gate.">Cancel formal study</button>
+    </form>
+  </section>
+  {% endif %}
+{% endif %}
+
+{% if inspection and analysis %}
+<section class="formal-report-meta" aria-label="Formal study provenance">
+  <div><span>Status</span><strong class="status status--{{ study.status|lower }}">{{ study.get_status_display }}</strong></div>
+  <div><span>Manifest</span><code title="{{ study.manifest_hash }}">{{ study.manifest_hash|slice:':16' }}…</code></div>
+  <div><span>Source snapshot</span><code title="{{ study.source_snapshot.snapshot_hash }}">{{ study.source_snapshot.snapshot_hash|slice:':16' }}…</code></div>
+  <div><span>Budget per measured run</span><strong>{{ study.deadline_seconds }} s · {{ study.cpu_limit }} CPU · {{ study.memory_limit_mb }} MB</strong></div>
+</section>
+
+{% if analysis.winner_decision.claimable %}
+  {% if analysis.winner_decision.winner %}
+  <section class="formal-conclusion formal-conclusion--available" aria-labelledby="formal-conclusion-title">
+    <div><p class="eyebrow">Formal conclusion available</p><h2 id="formal-conclusion-title">{{ analysis.winner_decision.winner_label }} is preferred</h2><p>{{ analysis.formal_conclusion }}</p></div>
+    <dl><div><dt>Deciding outcome</dt><dd>{{ analysis.winner_decision.deciding_outcome|title }}</dd></div><div><dt>Evidence scope</dt><dd>Protocol-valid 100% instance</dd></div></dl>
+  </section>
+  {% else %}
+  <section class="formal-conclusion formal-conclusion--neutral" aria-labelledby="formal-conclusion-title">
+    <div><p class="eyebrow">Formal conclusion available</p><h2 id="formal-conclusion-title">No meaningful overall advantage demonstrated</h2><p>{{ analysis.formal_conclusion }}</p></div>
+    <dl><div><dt>Decision rule</dt><dd>Feasibility → quality → RMST</dd></div><div><dt>Evidence scope</dt><dd>Protocol-valid 100% instance</dd></div></dl>
+  </section>
+  {% endif %}
+{% else %}
+<section class="formal-conclusion formal-conclusion--blocked" aria-labelledby="formal-conclusion-title">
+  <div><p class="eyebrow">Conclusion gate closed</p><h2 id="formal-conclusion-title">No formal conclusion available.</h2><p>The system will not name a preferred algorithm until the complete measured matrix is terminal, independently validated, and protocol-valid.</p></div>
+  <dl><div><dt>Study status</dt><dd>{{ study.get_status_display }}</dd></div><div><dt>Matrix complete</dt><dd>{% if analysis.integrity.matrix_complete %}Yes{% else %}No{% endif %}</dd></div></dl>
+</section>
+{% endif %}
+
+<section class="metric-grid formal-counts" aria-label="Trial accounting">
+  <article class="metric-card"><span>Pending</span><strong>{{ pending_count }}</strong><small>Queued or running</small></article>
+  <article class="metric-card"><span>Excluded</span><strong>{{ excluded_count }}</strong><small>Warm-ups, diagnostics, audited exclusions</small></article>
+  <article class="metric-card"><span>Replacements</span><strong>{{ replacement_count }}</strong><small>Preserved paired reruns</small></article>
+  <article class="metric-card"><span>Failed</span><strong>{{ failed_count }}</strong><small>Requires audited classification</small></article>
+</section>
+
+<div class="content-grid formal-integrity-grid">
+  <section class="panel formal-integrity" aria-labelledby="integrity-title">
+    <div class="panel__header"><div><p class="eyebrow">Protocol integrity</p><h2 id="integrity-title">Evidence eligibility</h2></div><span class="status {% if study.protocol_integrity.formal_eligible %}status--valid{% else %}status--invalid{% endif %}">{% if study.protocol_integrity.formal_eligible %}Valid{% else %}Not valid{% endif %}</span></div>
+    <dl class="definition-list formal-definition-list">
+      <div><dt>Measured denominator</dt><dd>{{ inspection.counts.included_measured }} / 240 included</dd></div>
+      <div><dt>All planned runs</dt><dd>{{ inspection.counts.all_runs }} / 260 recorded</dd></div>
+      <div><dt>Independent validation</dt><dd>{% if analysis.integrity.missing_independent_validator_evidence %}Incomplete{% else %}Present for eligible trials{% endif %}</dd></div>
+      <div><dt>Pair signatures</dt><dd>{% if analysis.integrity.pair_comparison_signatures_match %}Match{% else %}Mismatch detected{% endif %}</dd></div>
+      <div><dt>Unclassified failures</dt><dd>{% if analysis.integrity.has_unclassified_failure %}Present — conclusion blocked{% else %}None in measured evidence{% endif %}</dd></div>
+      <div><dt>Order seed</dt><dd>{{ study.order_seed }}</dd></div>
+    </dl>
+    {% if protocol_issues %}<details class="formal-issues"><summary>{{ protocol_issues|length }} protocol issue{{ protocol_issues|length|pluralize }}</summary><ul>{% for issue in protocol_issues %}<li><strong>{{ issue.code }}</strong> — {{ issue.message }}</li>{% endfor %}</ul></details>{% endif %}
+  </section>
+  <section class="panel" aria-labelledby="trial-accounting-title">
+    <div class="panel__header"><div><p class="eyebrow">Audit trail</p><h2 id="trial-accounting-title">Run accounting</h2></div></div>
+    <div class="table-wrap"><table><caption>Formal study run counts by category</caption><tbody>
+      <tr><th scope="row">Measured</th><td>{{ inspection.counts.by_purpose.MEASURED|default:0 }}</td></tr>
+      <tr><th scope="row">Warm-up</th><td>{{ inspection.counts.by_purpose.WARMUP|default:0 }}</td></tr>
+      <tr><th scope="row">Diagnostic</th><td>{{ inspection.counts.by_purpose.DIAGNOSTIC|default:0 }}</td></tr>
+      <tr><th scope="row">Infrastructure failures</th><td>{{ inspection.counts.by_failure_category.INFRASTRUCTURE|default:0 }}</td></tr>
+      <tr><th scope="row">User cancellations</th><td>{{ inspection.counts.by_failure_category.USER_CANCELLATION|default:0 }}</td></tr>
+      <tr><th scope="row">Unclassified failures</th><td>{{ inspection.counts.by_failure_category.UNCLASSIFIED|default:0 }}</td></tr>
+    </tbody></table></div>
+  </section>
+</div>
+
+<section class="panel research-figure-panel" aria-labelledby="feasibility-figure-title">
+  <div class="panel__header"><div><p class="eyebrow">Primary outcome 1</p><h2 id="feasibility-figure-title">Independent feasibility across demand</h2><p>Dot and Wilson 95% interval · higher is better</p></div><span class="tag">All eligible trials</span></div>
+  <figure class="research-figure">
+    <svg viewBox="0 0 800 270" role="img" aria-labelledby="feasibility-svg-title feasibility-svg-desc">
+      <title id="feasibility-svg-title">Feasibility rate with Wilson intervals at four demand levels</title>
+      <desc id="feasibility-svg-desc">Solid green circles represent CP-SAT. Dashed gold diamonds represent the Genetic Algorithm. Vertical lines show Wilson 95 percent intervals.</desc>
+      <g class="research-chart__grid" aria-hidden="true">
+        <line x1="70" y1="32" x2="750" y2="32"/><line x1="70" y1="79" x2="750" y2="79"/><line x1="70" y1="125" x2="750" y2="125"/><line x1="70" y1="172" x2="750" y2="172"/><line x1="70" y1="218" x2="750" y2="218"/>
+        <text x="56" y="36">100%</text><text x="56" y="83">75%</text><text x="56" y="129">50%</text><text x="56" y="176">25%</text><text x="56" y="222">0%</text>
+      </g>
+      {% for row in scale_rows %}
+        <text class="research-chart__axis-label" x="{{ row.x }}" y="250">{{ row.scale }}%</text>
+        {% if row.cp_y != None %}<g class="research-mark research-mark--cp"><line x1="{{ row.cp_x }}" y1="{{ row.cp_interval_top }}" x2="{{ row.cp_x }}" y2="{{ row.cp_interval_bottom }}"/><line x1="{{ row.cp_x|add:'-5' }}" y1="{{ row.cp_interval_top }}" x2="{{ row.cp_x|add:'5' }}" y2="{{ row.cp_interval_top }}"/><line x1="{{ row.cp_x|add:'-5' }}" y1="{{ row.cp_interval_bottom }}" x2="{{ row.cp_x|add:'5' }}" y2="{{ row.cp_interval_bottom }}"/><circle cx="{{ row.cp_x }}" cy="{{ row.cp_y }}" r="6"/><text x="{{ row.cp_x }}" y="{{ row.cp_y|add:'-10' }}">{{ row.cp_feasibility.percentage|floatformat:1 }}%</text></g>{% endif %}
+        {% if row.ga_y != None %}<g class="research-mark research-mark--ga"><line x1="{{ row.ga_x }}" y1="{{ row.ga_interval_top }}" x2="{{ row.ga_x }}" y2="{{ row.ga_interval_bottom }}"/><line x1="{{ row.ga_x|add:'-5' }}" y1="{{ row.ga_interval_top }}" x2="{{ row.ga_x|add:'5' }}" y2="{{ row.ga_interval_top }}"/><line x1="{{ row.ga_x|add:'-5' }}" y1="{{ row.ga_interval_bottom }}" x2="{{ row.ga_x|add:'5' }}" y2="{{ row.ga_interval_bottom }}"/><rect x="{{ row.ga_x|add:'-5' }}" y="{{ row.ga_y|add:'-5' }}" width="10" height="10" transform="rotate(45 {{ row.ga_x }} {{ row.ga_y }})"/><text x="{{ row.ga_x }}" y="{{ row.ga_y|add:'16' }}">{{ row.ga_feasibility.percentage|floatformat:1 }}%</text></g>{% endif %}
+      {% endfor %}
+      <g class="research-chart__direct-labels"><text x="610" y="18" class="research-label--cp">CP-SAT — solid circle</text><text x="610" y="265" class="research-label--ga">GA -- dashed diamond</text></g>
+    </svg>
+    <figcaption>Numerator and denominator remain visible in the evidence table below; unsuccessful algorithm observations stay in the denominator.</figcaption>
+  </figure>
+</section>
+
+<div class="content-grid formal-primary-grid">
+  <section class="panel research-figure-panel" aria-labelledby="km-title">
+    <div class="panel__header"><div><p class="eyebrow">Primary outcome 3</p><h2 id="km-title">Time to feasibility at 100%</h2><p>Kaplan–Meier estimate through {{ study.deadline_seconds }} seconds</p></div></div>
+    <figure class="research-figure research-figure--compact">
+      <svg viewBox="0 0 800 270" role="img" aria-labelledby="km-svg-title km-svg-desc">
+        <title id="km-svg-title">Kaplan-Meier time-to-feasibility curves for the full instance</title><desc id="km-svg-desc">The vertical axis is probability of not yet finding a feasible schedule. Runs without feasibility are censored at 300 seconds.</desc>
+        <g class="research-chart__grid" aria-hidden="true"><line x1="70" y1="32" x2="730" y2="32"/><line x1="70" y1="125" x2="730" y2="125"/><line x1="70" y1="218" x2="730" y2="218"/><text x="58" y="36">1.0</text><text x="58" y="129">0.5</text><text x="58" y="222">0</text><text x="70" y="246">0 s</text><text x="730" y="246">{{ study.deadline_seconds }} s</text></g>
+        {% if cp_km_path %}<path class="research-km research-km--cp" d="{{ cp_km_path }}"/><text class="research-label--cp" x="550" y="18">CP-SAT — solid</text>{% endif %}
+        {% if ga_km_path %}<path class="research-km research-km--ga" d="{{ ga_km_path }}"/><text class="research-label--ga" x="665" y="18">GA -- dashed</text>{% endif %}
+        {% if not cp_km_path and not ga_km_path %}<text class="research-chart__empty" x="400" y="135">No eligible measured trials yet</text>{% endif %}
+      </svg>
+      <figcaption>Lower curves indicate earlier feasibility. Non-feasible trials are right-censored; success-only averages are not used.</figcaption>
+    </figure>
+    {% if full_scale %}<dl class="research-pair-summary"><div><dt>CP-SAT RMST</dt><dd>{{ full_scale.cp_time.rmst_seconds|floatformat:2|default:'—' }} s</dd></div><div><dt>GA RMST</dt><dd>{{ full_scale.ga_time.rmst_seconds|floatformat:2|default:'—' }} s</dd></div><div><dt>Holm-adjusted p</dt><dd>{{ full_scale.time_comparison.p_value_holm_adjusted|floatformat:4|default:'—' }}</dd></div></dl>{% endif %}
+  </section>
+
+  <section class="panel research-figure-panel" aria-labelledby="penalty-title">
+    <div class="panel__header"><div><p class="eyebrow">Primary outcome 2</p><h2 id="penalty-title">Feasible raw penalty</h2><p>Boxplots with individual trials · lower is better</p></div></div>
+    <figure class="research-figure research-figure--compact">
+      <svg viewBox="0 0 800 270" role="img" aria-labelledby="penalty-svg-title penalty-svg-desc">
+        <title id="penalty-svg-title">Raw weighted penalty distributions across demand levels</title><desc id="penalty-svg-desc">Boxes show quartiles and median. Individual feasible trials are overlaid. Green is CP-SAT and gold is the Genetic Algorithm.</desc>
+        <g class="research-chart__grid" aria-hidden="true"><line x1="70" y1="32" x2="750" y2="32"/><line x1="70" y1="125" x2="750" y2="125"/><line x1="70" y1="218" x2="750" y2="218"/><text x="58" y="36">{{ penalty_plot.maximum|floatformat:0 }}</text><text x="58" y="222">0</text></g>
+        {% for group in penalty_plot.groups %}{% if group.available %}<g class="research-boxplot {% if group.algorithm == 'CP-SAT' %}research-boxplot--cp{% else %}research-boxplot--ga{% endif %}"><line x1="{{ group.x }}" y1="{{ group.low_y }}" x2="{{ group.x }}" y2="{{ group.high_y }}"/><rect x="{{ group.x|add:'-8' }}" y="{{ group.box_y }}" width="16" height="{{ group.box_height }}"/><line x1="{{ group.x|add:'-10' }}" y1="{{ group.median_y }}" x2="{{ group.x|add:'10' }}" y2="{{ group.median_y }}"/>{% for point in group.points %}<circle cx="{{ point.x }}" cy="{{ point.y }}" r="2.2"/>{% endfor %}</g>{% endif %}{% endfor %}
+        {% for row in scale_rows %}<text class="research-chart__axis-label" x="{{ row.x }}" y="246">{{ row.scale }}%</text>{% endfor %}
+        <text class="research-label--cp" x="570" y="18">CP-SAT — solid</text><text class="research-label--ga" x="680" y="18">GA -- hatched</text>
+      </svg>
+      <figcaption>Only independently feasible schedules enter this quality outcome. The primary value is the unnormalized raw weighted soft penalty.</figcaption>
+    </figure>
+    {% if full_scale %}<dl class="research-pair-summary"><div><dt>CP-SAT median</dt><dd>{{ full_scale.cp_quality.raw_weighted_soft_penalty.median|floatformat:2|default:'—' }}</dd></div><div><dt>GA median</dt><dd>{{ full_scale.ga_quality.raw_weighted_soft_penalty.median|floatformat:2|default:'—' }}</dd></div><div><dt>A12, CP-SAT lower</dt><dd>{{ full_scale.quality_comparison.vargha_delaney_a12_cp_sat_lower_penalty|floatformat:3|default:'—' }}</dd></div></dl>{% endif %}
+  </section>
+</div>
+
+<section class="panel" aria-labelledby="primary-evidence-title">
+  <div class="panel__header"><div><p class="eyebrow">Objective comparison</p><h2 id="primary-evidence-title">Primary outcomes by demand level</h2><p>Holm adjustment is applied to exactly three comparisons within each scale.</p></div></div>
+  <div class="table-wrap"><table class="research-evidence-table"><caption>Feasibility, feasible penalty, and RMST evidence by scheduling demand level</caption><thead><tr><th scope="col">Demand</th><th scope="col">Algorithm</th><th scope="col">Feasible / eligible</th><th scope="col">Wilson 95%</th><th scope="col">Median raw penalty</th><th scope="col">Penalty / meeting</th><th scope="col">RMST</th><th scope="col">Censored</th></tr></thead><tbody>
+    {% for row in scale_rows %}
+    <tr class="research-evidence-table__cp"><th scope="rowgroup" rowspan="2">{{ row.scale }}%</th><th scope="row">CP-SAT</th><td>{{ row.cp_feasibility.independently_feasible|default:0 }} / {{ row.cp_feasibility.eligible_trials|default:0 }}</td><td>{% if row.cp_feasibility.wilson_95 %}{{ row.cp_feasibility.wilson_95.0|floatformat:3 }}–{{ row.cp_feasibility.wilson_95.1|floatformat:3 }}{% else %}—{% endif %}</td><td>{{ row.cp_quality.raw_weighted_soft_penalty.median|floatformat:2|default:'—' }}</td><td>{{ row.cp_quality.penalty_per_meeting.median|floatformat:3|default:'—' }}</td><td>{{ row.cp_time.rmst_seconds|floatformat:2|default:'—' }}{% if row.cp_time.rmst_seconds != None %} s{% endif %}</td><td>{{ row.cp_time.right_censored_trials|default:0 }}</td></tr>
+    <tr class="research-evidence-table__ga"><th scope="row">Genetic Algorithm</th><td>{{ row.ga_feasibility.independently_feasible|default:0 }} / {{ row.ga_feasibility.eligible_trials|default:0 }}</td><td>{% if row.ga_feasibility.wilson_95 %}{{ row.ga_feasibility.wilson_95.0|floatformat:3 }}–{{ row.ga_feasibility.wilson_95.1|floatformat:3 }}{% else %}—{% endif %}</td><td>{{ row.ga_quality.raw_weighted_soft_penalty.median|floatformat:2|default:'—' }}</td><td>{{ row.ga_quality.penalty_per_meeting.median|floatformat:3|default:'—' }}</td><td>{{ row.ga_time.rmst_seconds|floatformat:2|default:'—' }}{% if row.ga_time.rmst_seconds != None %} s{% endif %}</td><td>{{ row.ga_time.right_censored_trials|default:0 }}</td></tr>
+    {% endfor %}
+  </tbody></table></div>
+</section>
+
+<section class="panel" aria-labelledby="execution-title">
+  <div class="panel__header"><div><p class="eyebrow">Secondary evidence</p><h2 id="execution-title">Execution-time distributions</h2><p>Median and interquartile range for all eligible measured runs</p></div><span class="tag">Wall clock</span></div>
+  <div class="execution-distributions">
+    {% for row in execution_rows %}<article><h3>{{ row.scale }}% demand</h3>{% for distribution in row.distributions %}<div class="execution-distribution execution-distribution--{{ distribution.css_class }}"><div><strong>{{ distribution.label }}</strong>{% if distribution.available %}<span>{{ distribution.median|floatformat:2 }} s median · n={{ distribution.count }}</span>{% else %}<span>No eligible timing data</span>{% endif %}</div>{% if distribution.available %}<div class="distribution-track" aria-label="Minimum {{ distribution.minimum|floatformat:2 }}, first quartile {{ distribution.q1|floatformat:2 }}, median {{ distribution.median|floatformat:2 }}, third quartile {{ distribution.q3|floatformat:2 }}, maximum {{ distribution.maximum|floatformat:2 }} seconds"><span class="distribution-whisker" style="left:{{ distribution.low_percent }}%;width:{{ distribution.whisker_width }}%"></span><span class="distribution-box" style="left:{{ distribution.q1_percent }}%;width:{{ distribution.box_width }}%"></span><span class="distribution-median" style="left:{{ distribution.median_percent }}%"></span></div>{% endif %}</div>{% endfor %}</article>{% endfor %}
+  </div>
+</section>
+
+<section class="panel" aria-labelledby="components-title">
+  <div class="panel__header"><div><p class="eyebrow">Quality decomposition</p><h2 id="components-title">Objective-component small multiples</h2><p>Median among independently feasible schedules · each component uses its own scale</p></div></div>
+  <div class="component-multiples">
+    {% for component in component_rows %}<article><h3>{{ component.label }}</h3>{% for point in component.values %}<div class="component-pair"><span>{{ point.scale }}%</span><div><i class="component-bar component-bar--cp" style="width:{{ point.cp_percent }}%"></i><small>CP-SAT {{ point.cp|floatformat:2|default:'—' }}</small></div><div><i class="component-bar component-bar--ga" style="width:{{ point.ga_percent }}%"></i><small>GA {{ point.ga|floatformat:2|default:'—' }}</small></div></div>{% endfor %}</article>{% endfor %}
+  </div>
+</section>
+
+<section class="panel" aria-labelledby="instance-title">
+  <div class="panel__header"><div><p class="eyebrow">Scaling evidence</p><h2 id="instance-title">Frozen instance characteristics</h2><p>Separate descriptors are reported; no blended complexity score is calculated.</p></div></div>
+  <div class="table-wrap"><table><caption>Problem-instance characteristics at each nested demand level</caption><thead><tr><th scope="col">Planned / actual</th><th scope="col">Offerings / meetings</th><th scope="col">Sections / instructors</th><th scope="col">Rooms / time atoms</th><th scope="col">Locks</th><th scope="col">Candidate domain min / median / mean / max</th><th scope="col">Required / available room-atoms</th><th scope="col">Domain density</th><th scope="col">Demand pressure</th><th scope="col">Availability density</th><th scope="col">Headcount min / median / mean / max</th><th scope="col">Meetings near 50</th></tr></thead><tbody>{% for row in instance_rows %}<tr><th scope="row">{{ row.scale }}% / {{ row.actual|floatformat:1 }}%</th><td>{{ row.offerings }} / {{ row.meetings }}</td><td>{{ row.sections }} / {{ row.instructors }}</td><td>{{ row.rooms }} / {{ row.time_atoms }}</td><td>{{ row.locks }}</td><td>{{ row.candidate_min }} / {{ row.candidate_median|floatformat:1 }} / {{ row.candidate_mean|floatformat:1 }} / {{ row.candidate_max }}</td><td>{{ row.required_atoms }} / {{ row.available_atoms }}</td><td>{{ row.domain_density|floatformat:4|default:'—' }}</td><td>{{ row.demand_pressure|floatformat:4|default:'—' }}</td><td>{{ row.availability_density|floatformat:4|default:'—' }}</td><td>{{ row.headcount_min }} / {{ row.headcount_median|floatformat:1 }} / {{ row.headcount_mean|floatformat:1 }} / {{ row.headcount_max }}</td><td>{{ row.approaching_50 }}</td></tr>{% empty %}<tr><td colspan="12">No frozen scale instances are available.</td></tr>{% endfor %}</tbody></table></div>
+  <p class="benchmark-method-note">Room-time measures refer only to occupied scheduling periods. The fixed limit is 50 students for every section and combined meeting.</p>
+</section>
+
+<div class="content-grid diagnostic-grid">
+  <section class="panel" aria-labelledby="cp-diagnostics-title"><div class="panel__header"><div><p class="eyebrow">Solver diagnostics</p><h2 id="cp-diagnostics-title">CP-SAT proof and search</h2><p>Typical full-instance values where recorded</p></div></div><dl class="diagnostic-list"><div><dt>Recorded runs</dt><dd>{{ diagnostics.cp.recorded }}</dd></div><div><dt>Optimality proofs</dt><dd>{{ diagnostics.cp.proven_optimal }}</dd></div><div><dt>Infeasibility proofs</dt><dd>{{ diagnostics.cp.proven_infeasible }}</dd></div><div><dt>Median relative gap</dt><dd>{{ diagnostics.cp.relative_gap|floatformat:4|default:'—' }}</dd></div><div><dt>Median branches</dt><dd>{{ diagnostics.cp.branches|floatformat:0|default:'—' }}</dd></div><div><dt>Median conflicts</dt><dd>{{ diagnostics.cp.conflicts|floatformat:0|default:'—' }}</dd></div><div><dt>Model variables</dt><dd>{{ diagnostics.cp.variables|floatformat:0|default:'—' }}</dd></div><div><dt>Model constraints</dt><dd>{{ diagnostics.cp.constraints|floatformat:0|default:'—' }}</dd></div></dl></section>
+  <section class="panel" aria-labelledby="ga-diagnostics-title"><div class="panel__header"><div><p class="eyebrow">Solver diagnostics</p><h2 id="ga-diagnostics-title">GA search behavior</h2><p>Medians from eligible terminal measured runs at full demand</p></div></div><dl class="diagnostic-list"><div><dt>Recorded runs</dt><dd>{{ diagnostics.ga.recorded }}</dd></div><div><dt>Evaluated chromosomes</dt><dd>{{ diagnostics.ga.evaluations|floatformat:0|default:'—' }}</dd></div><div><dt>Generations</dt><dd>{{ diagnostics.ga.generations|floatformat:0|default:'—' }}</dd></div><div><dt>Repair attempts / child</dt><dd>{{ diagnostics.ga.repair_attempts|floatformat:0|default:'—' }}</dd></div><div><dt>Repairs reaching feasibility</dt><dd>{{ diagnostics.ga.repair_successes|floatformat:0|default:'—' }}</dd></div><div><dt>Unresolved repairs</dt><dd>{{ diagnostics.ga.repair_failures|floatformat:0|default:'—' }}</dd></div><div><dt>Duplicates suppressed</dt><dd>{{ diagnostics.ga.duplicates|floatformat:0|default:'—' }}</dd></div><div><dt>Mutation rate</dt><dd>{{ diagnostics.ga.mutation_rate|floatformat:5|default:'—' }}</dd></div><div><dt>Mutated genes</dt><dd>{{ diagnostics.ga.mutation_operations|floatformat:0|default:'—' }}</dd></div><div><dt>Stagnant generations</dt><dd>{{ diagnostics.ga.stagnation|floatformat:0|default:'—' }}</dd></div></dl></section>
+</div>
+
+<section class="panel" aria-labelledby="diagnostic-traces-title">
+  <div class="panel__header"><div><p class="eyebrow">Excluded diagnostic evidence</p><h2 id="diagnostic-traces-title">Convergence traces remain separate</h2></div><span class="tag">Excluded from inference</span></div>
+  <p>Seed 9001 trace runs and the 1,800-second CP-SAT feasibility diagnostics never enter primary-outcome denominators. Traces record improving incumbents whose validation and scoring finished within the deadline, with at most 512 retained points per run. Empty traces are not zero-penalty results.</p>
+  <div class="component-multiples">
+    {% for section in convergence_sections %}<article>
+      <h3>{{ section.scale }}% demand · {{ section.point_count }} recorded points</h3>
+      <figure class="research-figure">{{ section.svg|safe }}<figcaption>CP-SAT solid; GA dashed. Search initialization and shared scoring count toward elapsed time. Excluded from inference.</figcaption></figure>
+      {% if section.point_count %}<details><summary>Accessible trace data for {{ section.scale }}% demand</summary><div class="table-wrap"><table><caption>Excluded seed 9001 incumbent trace</caption><thead><tr><th scope="col">Algorithm</th><th scope="col">Elapsed seconds</th><th scope="col">Hard violations</th><th scope="col">Feasible raw penalty</th></tr></thead><tbody>{% for trace in section.traces %}{% for point in trace.points %}<tr><th scope="row">{{ trace.algorithm }}</th><td>{{ point.elapsed_seconds|floatformat:4 }}</td><td>{{ point.hard_violations }}</td><td>{{ point.raw_penalty|default_if_none:'Not feasible' }}</td></tr>{% endfor %}{% endfor %}</tbody></table></div></details>{% else %}<p>No diagnostic incumbent has been recorded for this demand level.</p>{% endif %}
+    </article>{% endfor %}
+  </div>
+  <p>Printable figures and allowlisted numeric trace data are included in the evidence bundle. Warm-up runs: {{ inspection.counts.by_purpose.WARMUP|default:0 }}. Diagnostic runs: {{ inspection.counts.by_purpose.DIAGNOSTIC|default:0 }}.</p>
+</section>
+
+{% else %}
+<section class="empty-state empty-state--prominent"><div><h2>Formal study report unavailable</h2><p>The study exists, but its protocol inspection or statistical report could not be computed safely.</p></div><a class="button button--primary" href="{% url 'scheduler:research' %}?workflow=formal">Return to Formal Study</a></section>
+{% endif %}
+{% endblock %}

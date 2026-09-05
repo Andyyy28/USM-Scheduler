@@ -20,6 +20,7 @@ from scheduler.api.permissions import IsCentralScheduler, IsSchedulerUser
 from scheduler.api.serializers import (
     AcademicTermSerializer,
     ExperimentBatchSerializer,
+    ExperimentStudySerializer,
     ImportBatchSerializer,
     ObjectiveProfileSerializer,
     ProblemSnapshotSerializer,
@@ -28,7 +29,8 @@ from scheduler.api.serializers import (
     TermDatasetRevisionSerializer,
 )
 from scheduler.services.problem_builder import ProblemBuildError, build_and_store_snapshot
-from scheduler.services.runs import create_run, queue_run
+from scheduler.services.revision_metadata import with_dataset_counts
+from scheduler.services.runs import RunDispatchError, create_run, queue_run
 from scheduler.services.statistics import describe, vargha_delaney_a12, wilson_interval
 from scheduler.services.workflow import (
     approve_schedule,
@@ -49,6 +51,34 @@ def _translate_domain_error(exc: Exception) -> None:
     if isinstance(exc, ValueError):
         raise ValidationError(str(exc)) from exc
     raise exc
+
+
+def _formal_study_error_response(exc: Exception) -> Response:
+    """Keep formal-protocol failures machine readable for research tooling."""
+
+    from scheduler.services.formal_studies import FormalStudyError
+
+    if not isinstance(exc, FormalStudyError):
+        _translate_domain_error(exc)
+    return Response(
+        {
+            "code": "FORMAL_STUDY_ERROR",
+            "detail": str(exc),
+            "issues": [issue.to_dict() for issue in exc.issues],
+        },
+        status=status.HTTP_400_BAD_REQUEST,
+    )
+
+
+def _problem_build_error_response(exc: ProblemBuildError) -> Response:
+    return Response(
+        {
+            "code": "PREFLIGHT_FAILED",
+            "detail": str(exc),
+            "issues": [issue.to_dict() for issue in exc.issues],
+        },
+        status=status.HTTP_400_BAD_REQUEST,
+    )
 
 
 class HealthView(APIView):
@@ -80,7 +110,10 @@ class RevisionListView(APIView):
 
     def get(self, request, term_id: int):
         term = get_object_or_404(models.AcademicTerm, pk=term_id)
-        return Response(TermDatasetRevisionSerializer(term.dataset_revisions.all(), many=True).data)
+        revisions = with_dataset_counts(
+            term.dataset_revisions.select_related("source_import_batch")
+        )
+        return Response(TermDatasetRevisionSerializer(revisions, many=True).data)
 
 
 class TermCloneView(APIView):
@@ -125,10 +158,7 @@ class RevisionFinalizeView(APIView):
         try:
             revision = validate_and_commit_revision(revision, objective, request.user)
         except ProblemBuildError as exc:
-            return Response(
-                {"code": "PREFLIGHT_FAILED", "issues": [issue.to_dict() for issue in exc.issues]},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return _problem_build_error_response(exc)
         except Exception as exc:
             _translate_domain_error(exc)
         return Response(TermDatasetRevisionSerializer(revision).data)
@@ -165,17 +195,34 @@ class TrialWorkbookView(APIView):
     def get(self, request):
         from scheduler.services.trial_data import (
             TRIAL_WORKBOOK_FILENAME,
+            TrialPolicyConfigurationError,
+            approved_trial_policy_hashes,
             build_trial_workbook_bytes,
         )
 
+        term_id = request.query_params.get("term_id")
+        if not term_id:
+            raise ValidationError(
+                {"term_id": "Choose the target academic term so approved policy hashes can be embedded."}
+            )
+        try:
+            term_id = int(term_id)
+        except (TypeError, ValueError) as exc:
+            raise ValidationError({"term_id": "Enter a valid academic-term ID."}) from exc
+        term = get_object_or_404(models.AcademicTerm, pk=term_id)
+        try:
+            policy_hashes = approved_trial_policy_hashes(term)
+        except TrialPolicyConfigurationError as exc:
+            raise ValidationError({"term_id": str(exc)}) from exc
         response = HttpResponse(
-            build_trial_workbook_bytes(),
+            build_trial_workbook_bytes(campus=term.campus, **policy_hashes),
             content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
         response["Content-Disposition"] = (
             f'attachment; filename="{TRIAL_WORKBOOK_FILENAME}"'
         )
         response["X-Content-Type-Options"] = "nosniff"
+        response["X-USM-Target-Term-ID"] = str(term.pk)
         return response
 
 
@@ -201,7 +248,20 @@ class ImportPreviewView(APIView):
         if upload.size > 20 * 1024 * 1024:
             raise ValidationError({"file": "The workbook exceeds the 20 MB limit."})
         term = get_object_or_404(models.AcademicTerm, pk=request.data.get("term_id"))
-        batch = preview_workbook(upload.read(), term=term, user=request.user)
+        data_origin = request.data.get("data_origin")
+        if data_origin not in {
+            models.DatasetOrigin.SYNTHETIC,
+            models.DatasetOrigin.INSTITUTIONAL,
+        }:
+            raise ValidationError(
+                {"data_origin": "Declare whether this dataset is synthetic or institutional."}
+            )
+        batch = preview_workbook(
+            upload.read(),
+            term=term,
+            user=request.user,
+            data_origin=data_origin,
+        )
         if batch.original_filename != upload.name:
             batch.original_filename = upload.name[:255]
             batch.save(update_fields=["original_filename", "updated_at"])
@@ -239,10 +299,7 @@ class SnapshotListCreateView(APIView):
         try:
             snapshot, _ = build_and_store_snapshot(revision, objective, request.user)
         except ProblemBuildError as exc:
-            return Response(
-                {"code": "PREFLIGHT_FAILED", "issues": [issue.to_dict() for issue in exc.issues]},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return _problem_build_error_response(exc)
         return Response(ProblemSnapshotSerializer(snapshot).data, status=status.HTTP_201_CREATED)
 
 
@@ -301,6 +358,11 @@ class RunListCreateView(APIView):
         for field in configurable_fields:
             if request.data.get(field) not in (None, ""):
                 configuration[field] = request.data[field]
+        if "first_feasible_only" in request.data:
+            value = request.data["first_feasible_only"]
+            if value not in (True, False, "true", "false"):
+                raise ValidationError({"first_feasible_only": "Choose a generation goal."})
+            configuration["first_feasible_only"] = value in (True, "true")
         queued = []
         for algorithm in algorithms:
             try:
@@ -312,6 +374,11 @@ class RunListCreateView(APIView):
                     configuration=configuration,
                 )
                 queued.append(queue_run(run))
+            except RunDispatchError as exc:
+                return Response(
+                    {"detail": str(exc), "run_id": run.pk},
+                    status=status.HTTP_503_SERVICE_UNAVAILABLE,
+                )
             except Exception as exc:
                 _translate_domain_error(exc)
         return Response(ScheduleRunSerializer(queued, many=True).data, status=status.HTTP_202_ACCEPTED)
@@ -343,43 +410,98 @@ class RunComparisonView(APIView):
     def get(self, request):
         snapshot_id = request.query_params.get("snapshot_id")
         experiment_id = request.query_params.get("experiment_batch_id")
-        runs = models.ScheduleRun.objects.all()
+        runs = models.ScheduleRun.objects.select_related("snapshot", "experiment_batch")
+        scope: dict[str, int | str]
         if experiment_id:
+            batch = get_object_or_404(models.ExperimentBatch, pk=experiment_id)
             runs = runs.filter(experiment_batch_id=experiment_id)
+            scope = {
+                "type": "controlled_experiment",
+                "experiment_batch_id": batch.pk,
+                "snapshot_id": batch.snapshot_id,
+            }
         elif snapshot_id:
+            snapshot = get_object_or_404(models.ProblemSnapshot, pk=snapshot_id)
             runs = runs.filter(snapshot_id=snapshot_id)
+            scope = {"type": "snapshot", "snapshot_id": snapshot.pk}
         else:
             raise ValidationError("snapshot_id or experiment_batch_id is required.")
+
+        planned_runs = list(runs)
+        if snapshot_id and not experiment_id:
+            from scheduler.services.experiments import snapshot_comparison_heterogeneity
+
+            heterogeneous = snapshot_comparison_heterogeneity(planned_runs)
+            if heterogeneous:
+                return Response(
+                    {
+                        "code": "HETEROGENEOUS_COMPARISON",
+                        "detail": (
+                            "Snapshot comparisons require one deadline and worker count, "
+                            "plus one implementation version and resolved configuration "
+                            "within each algorithm. Use a controlled experiment batch or "
+                            "narrow the run set."
+                        ),
+                        "heterogeneous_dimensions": heterogeneous,
+                    },
+                    status=status.HTTP_409_CONFLICT,
+                )
+
+        from scheduler.services.experiments import TERMINAL_STATUSES
+
         payload: dict[str, dict] = {}
         for algorithm in models.SolverAlgorithm.values:
-            sample = list(runs.filter(algorithm=algorithm))
-            feasible = [run for run in sample if run.status in {models.RunStatus.FEASIBLE, models.RunStatus.OPTIMAL}]
-            interval = wilson_interval(len(feasible), len(sample)) if sample else (None, None)
+            planned = [run for run in planned_runs if run.algorithm == algorithm]
+            observed = [run for run in planned if run.status in TERMINAL_STATUSES]
+            feasible = [
+                run
+                for run in observed
+                if run.status in {models.RunStatus.FEASIBLE, models.RunStatus.OPTIMAL}
+            ]
+            interval = (
+                wilson_interval(len(feasible), len(observed))
+                if observed
+                else (None, None)
+            )
             payload[algorithm] = {
-                "runs": len(sample),
+                "runs": len(observed),
+                "planned_runs": len(planned),
+                "observed_runs": len(observed),
+                "pending_runs": len(planned) - len(observed),
                 "feasible_runs": len(feasible),
-                "success_rate": len(feasible) / len(sample) if sample else None,
+                "success_rate": len(feasible) / len(observed) if observed else None,
                 "success_rate_wilson_95": interval,
                 "execution_seconds": describe(
-                    run.execution_seconds for run in sample if run.execution_seconds is not None
+                    run.execution_seconds
+                    for run in observed
+                    if run.execution_seconds is not None
                 ).to_dict(),
                 "first_feasible_seconds": describe(
-                    run.first_feasible_seconds for run in feasible if run.first_feasible_seconds is not None
+                    run.first_feasible_seconds
+                    for run in feasible
+                    if run.first_feasible_seconds is not None
                 ).to_dict(),
                 "soft_penalty": describe(
-                    run.objective_value for run in feasible if run.objective_value is not None
+                    run.objective_value
+                    for run in feasible
+                    if run.objective_value is not None
                 ).to_dict(),
             }
         cp_penalties = [
-            run.objective_value for run in runs.filter(
-                algorithm=models.SolverAlgorithm.CP_SAT, objective_value__isnull=False
-            )
+            run.objective_value
+            for run in planned_runs
+            if run.algorithm == models.SolverAlgorithm.CP_SAT
+            and run.status in {models.RunStatus.FEASIBLE, models.RunStatus.OPTIMAL}
+            and run.objective_value is not None
         ]
         ga_penalties = [
-            run.objective_value for run in runs.filter(
-                algorithm=models.SolverAlgorithm.GENETIC_ALGORITHM, objective_value__isnull=False
-            )
+            run.objective_value
+            for run in planned_runs
+            if run.algorithm == models.SolverAlgorithm.GENETIC_ALGORITHM
+            and run.status in {models.RunStatus.FEASIBLE, models.RunStatus.OPTIMAL}
+            and run.objective_value is not None
         ]
+        payload["scope"] = scope
         payload["effect_sizes"] = {
             "cp_sat_probability_lower_penalty": (
                 vargha_delaney_a12(cp_penalties, ga_penalties) if cp_penalties and ga_penalties else None
@@ -524,10 +646,7 @@ class ScheduleRegenerateView(APIView):
                 request.user,
             )
         except ProblemBuildError as exc:
-            return Response(
-                {"code": "PREFLIGHT_FAILED", "issues": [issue.to_dict() for issue in exc.issues]},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return _problem_build_error_response(exc)
         raw_algorithms = request.data.get("algorithms") or request.data.get("algorithm") or "CP_SAT"
         if hasattr(request.data, "getlist") and request.data.getlist("algorithms"):
             raw_algorithms = request.data.getlist("algorithms")
@@ -741,3 +860,240 @@ class ExperimentExportView(APIView):
             f'attachment; filename="experiment-{batch.pk}.{export_format}"'
         )
         return response
+
+
+class FormalStudyListCreateView(APIView):
+    """List formal studies or create the preregistered v2 protocol."""
+
+    permission_classes = [IsSchedulerUser]
+
+    def get(self, request):
+        queryset = (
+            models.ExperimentStudy.objects.filter(mode=models.ExperimentMode.FORMAL)
+            .select_related("source_snapshot")
+            .prefetch_related("batches")
+        )
+        if request.query_params.get("status"):
+            queryset = queryset.filter(status=request.query_params["status"])
+        if request.query_params.get("source_snapshot_id"):
+            queryset = queryset.filter(
+                source_snapshot_id=request.query_params["source_snapshot_id"]
+            )
+        return Response(ExperimentStudySerializer(queryset, many=True).data)
+
+    def post(self, request):
+        from scheduler.services.formal_studies import create_formal_study
+
+        if not IsCentralScheduler().has_permission(request, self):
+            raise PermissionDenied("Central scheduler access is required.")
+        source_snapshot_id = request.data.get("source_snapshot_id")
+        if source_snapshot_id in {None, ""}:
+            raise ValidationError(
+                {"source_snapshot_id": "A schema 1.2 source snapshot is required."}
+            )
+        snapshot = get_object_or_404(models.ProblemSnapshot, pk=source_snapshot_id)
+        solver_profiles = request.data.get("solver_profiles")
+        if isinstance(solver_profiles, str):
+            try:
+                solver_profiles = json.loads(solver_profiles)
+            except json.JSONDecodeError as exc:
+                raise ValidationError(
+                    {"solver_profiles": "Enter a valid JSON object."}
+                ) from exc
+        # The tuning command emits a complete, checksum-bearing selection
+        # artifact. Accept that artifact directly while retaining support for
+        # callers that submit only its selected_profiles object.
+        if isinstance(solver_profiles, dict) and isinstance(
+            solver_profiles.get("selected_profiles"), dict
+        ):
+            solver_profiles = solver_profiles["selected_profiles"]
+        try:
+            scaling_seed = int(request.data.get("scaling_seed", 20260824))
+        except (TypeError, ValueError) as exc:
+            raise ValidationError(
+                {"scaling_seed": "Use a non-negative integer."}
+            ) from exc
+        try:
+            study = create_formal_study(
+                source_snapshot=snapshot,
+                actor=request.user,
+                solver_profiles=solver_profiles,
+                name=request.data.get("name") or None,
+                scaling_seed=scaling_seed,
+            )
+        except Exception as exc:
+            return _formal_study_error_response(exc)
+        return Response(
+            ExperimentStudySerializer(study).data,
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class FormalStudyDetailView(APIView):
+    permission_classes = [IsSchedulerUser]
+
+    def get(self, request, study_id: int):
+        from scheduler.services.formal_studies import inspect_formal_study
+
+        study = get_object_or_404(
+            models.ExperimentStudy.objects.filter(mode=models.ExperimentMode.FORMAL),
+            pk=study_id,
+        )
+        try:
+            return Response(inspect_formal_study(study))
+        except Exception as exc:
+            return _formal_study_error_response(exc)
+
+
+class FormalStudyValidateView(APIView):
+    permission_classes = [IsCentralScheduler]
+
+    def post(self, request, study_id: int):
+        from scheduler.services.formal_studies import validate_formal_study
+
+        study = get_object_or_404(
+            models.ExperimentStudy.objects.filter(mode=models.ExperimentMode.FORMAL),
+            pk=study_id,
+        )
+        try:
+            result = validate_formal_study(study, actor=request.user)
+        except Exception as exc:
+            return _formal_study_error_response(exc)
+        return Response(result)
+
+
+class FormalStudyQueueView(APIView):
+    permission_classes = [IsCentralScheduler]
+
+    def post(self, request, study_id: int):
+        from scheduler.services.formal_studies import (
+            inspect_formal_study,
+            queue_formal_study,
+        )
+
+        study = get_object_or_404(
+            models.ExperimentStudy.objects.filter(mode=models.ExperimentMode.FORMAL),
+            pk=study_id,
+        )
+        try:
+            study = queue_formal_study(study, actor=request.user)
+            payload = inspect_formal_study(study)
+        except Exception as exc:
+            return _formal_study_error_response(exc)
+        return Response(payload, status=status.HTTP_202_ACCEPTED)
+
+
+class FormalStudyCancelView(APIView):
+    permission_classes = [IsCentralScheduler]
+
+    def post(self, request, study_id: int):
+        from scheduler.services.formal_studies import (
+            cancel_formal_study,
+            inspect_formal_study,
+        )
+
+        study = get_object_or_404(
+            models.ExperimentStudy.objects.filter(mode=models.ExperimentMode.FORMAL),
+            pk=study_id,
+        )
+        try:
+            study = cancel_formal_study(study, actor=request.user)
+            payload = inspect_formal_study(study)
+        except Exception as exc:
+            return _formal_study_error_response(exc)
+        return Response(payload)
+
+
+class FormalStudyAnalysisView(APIView):
+    permission_classes = [IsSchedulerUser]
+
+    def get(self, request, study_id: int):
+        from scheduler.services.research_metrics import analyze_experiment_study
+
+        study = get_object_or_404(
+            models.ExperimentStudy.objects.filter(mode=models.ExperimentMode.FORMAL),
+            pk=study_id,
+        )
+        try:
+            return Response(analyze_experiment_study(study))
+        except Exception as exc:
+            return _formal_study_error_response(exc)
+
+
+class FormalStudyEvidenceView(APIView):
+    permission_classes = [IsCentralScheduler]
+
+    def get(self, request, study_id: int):
+        import hashlib
+
+        from scheduler.services.formal_studies import formal_evidence_bundle
+
+        study = get_object_or_404(
+            models.ExperimentStudy.objects.filter(mode=models.ExperimentMode.FORMAL),
+            pk=study_id,
+        )
+        try:
+            content, filename = formal_evidence_bundle(study)
+        except Exception as exc:
+            return _formal_study_error_response(exc)
+        response = HttpResponse(content, content_type="application/zip")
+        response["Content-Disposition"] = f'attachment; filename="{filename}"'
+        response["Content-Length"] = str(len(content))
+        response["X-Evidence-SHA256"] = hashlib.sha256(content).hexdigest()
+        response["X-Content-Type-Options"] = "nosniff"
+        return response
+
+
+class FormalRunFailureClassificationView(APIView):
+    permission_classes = [IsCentralScheduler]
+
+    def post(self, request, run_id: int):
+        from scheduler.services.formal_studies import classify_run_failure
+
+        run = get_object_or_404(
+            models.ScheduleRun.objects.select_related("experiment_batch__study"),
+            pk=run_id,
+        )
+        category = str(request.data.get("category", "")).strip().upper()
+        reason = str(request.data.get("reason", "")).strip()
+        try:
+            run = classify_run_failure(
+                run,
+                actor=request.user,
+                category=category,
+                reason=reason,
+            )
+        except Exception as exc:
+            return _formal_study_error_response(exc)
+        return Response(ScheduleRunSerializer(run).data)
+
+
+class FormalRunPairedReplacementView(APIView):
+    permission_classes = [IsCentralScheduler]
+
+    def post(self, request, run_id: int):
+        from scheduler.services.formal_studies import (
+            create_paired_infrastructure_replacement,
+        )
+
+        run = get_object_or_404(
+            models.ScheduleRun.objects.select_related("experiment_batch__study"),
+            pk=run_id,
+        )
+        try:
+            replacements = create_paired_infrastructure_replacement(
+                run,
+                actor=request.user,
+            )
+        except Exception as exc:
+            return _formal_study_error_response(exc)
+        return Response(
+            {
+                "pair_attempt": 2,
+                "replacement_runs": ScheduleRunSerializer(
+                    replacements,
+                    many=True,
+                ).data,
+            },
+            status=status.HTTP_201_CREATED,
+        )

@@ -14,6 +14,9 @@ x-app-environment: &app-environment
   POSTGRES_PORT: "5432"
   REDIS_URL: redis://redis:6379/0
   CELERY_TASK_ALWAYS_EAGER: "false"
+  CELERY_TASK_TIME_LIMIT: "1860"
+  CELERY_VISIBILITY_TIMEOUT_SECONDS: "2100"
+  SCHEDULE_RUN_INFRASTRUCTURE_GRACE_SECONDS: "60"
   SOLVER_DEFAULT_TIME_LIMIT_SECONDS: ${SOLVER_DEFAULT_TIME_LIMIT_SECONDS:-300}
   SOLVER_MEMORY_LIMIT_MB: ${SOLVER_MEMORY_LIMIT_MB:-2048}
   APP_BUILD_ID: ${APP_BUILD_ID:-local-development}
@@ -105,17 +108,45 @@ services:
       <<: *app-environment
       RUN_MIGRATIONS: "false"
       COLLECT_STATIC: "false"
-    command: ["celery", "-A", "usm_scheduler", "worker", "--loglevel=INFO", "--concurrency=1", "--prefetch-multiplier=1"]
+    command: ["celery", "-A", "usm_scheduler", "worker", "--loglevel=INFO", "--hostname=routine@%h", "--queues=default", "--concurrency=1", "--prefetch-multiplier=1"]
     cpus: 1.0
     mem_limit: "${SOLVER_MEMORY_LIMIT_MB:-2048}m"
+    stop_grace_period: 70s
     volumes:
       - media_data:/app/media
     healthcheck:
-      test: ["CMD-SHELL", "celery -A usm_scheduler inspect ping --destination celery@$${HOSTNAME} --timeout 5 | grep -q pong"]
+      test: ["CMD-SHELL", "celery -A usm_scheduler inspect ping --destination routine@$${HOSTNAME} --timeout 5 | grep -q pong"]
       interval: 30s
       timeout: 10s
       retries: 5
       start_period: 30s
+
+  benchmark-worker:
+    <<: *app-service
+    environment:
+      <<: *app-environment
+      RUN_MIGRATIONS: "false"
+      COLLECT_STATIC: "false"
+    command: ["celery", "-A", "usm_scheduler", "worker", "--loglevel=INFO", "--hostname=benchmark@%h", "--queues=benchmark", "--concurrency=1", "--prefetch-multiplier=1", "--max-tasks-per-child=1"]
+    cpus: 1.0
+    mem_limit: 2048m
+    stop_grace_period: 70s
+    volumes:
+      - media_data:/app/media
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A usm_scheduler inspect ping --destination benchmark@$${HOSTNAME} --timeout 5 | grep -q pong"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  beat:
+    <<: *app-service
+    environment:
+      <<: *app-environment
+      RUN_MIGRATIONS: "false"
+      COLLECT_STATIC: "false"
+    command: ["celery", "-A", "usm_scheduler", "beat", "--loglevel=INFO", "--schedule=/tmp/celerybeat-schedule"]
 
 volumes:
   postgres_data:

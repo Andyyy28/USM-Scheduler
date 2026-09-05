@@ -1,93 +1,60 @@
 {% extends 'scheduler/base.html' %}
 
 {% block content %}
-<header class="page-header">
-  <div>
-    <p class="eyebrow">Operational guide</p>
-    <h1>Help and user guide</h1>
-    <p>Follow the controlled workflow below to prepare, generate, validate, review, and publish a semester timetable.</p>
-  </div>
-  <div class="page-actions">
-    <button class="button button--secondary" type="button" data-print-page>Print this guide</button>
-    {% if is_central %}<a class="button button--primary" href="{% url 'scheduler:imports' %}">Start with data import</a>{% endif %}
-  </div>
+<header class="page-header page-header--compact">
+  <div><p class="eyebrow">Help</p><h1>How can we help?</h1><p>Choose what you want to do. Each guide takes you directly to the right part of the system.</p></div>
+  <button class="button button--secondary" type="button" data-print-page>Print guide</button>
 </header>
 
-<section class="inline-note" role="note" aria-label="Prototype notice">
-  <strong>Before using institutional data:</strong> obtain written authorization, remove unnecessary personal data, and confirm the semester's room-authority and approval rules with the responsible USM offices. This prototype does not replace official approval.
-</section>
+<nav class="task-index" aria-label="Help topics">
+  {% if is_central %}<a href="#prepare"><span aria-hidden="true">1</span><strong>Prepare a semester</strong><small>Set up the term and upload data</small></a>{% endif %}
+  {% if is_central %}<a href="#generate"><span aria-hidden="true">2</span><strong>Generate a timetable</strong><small>Check data and run the scheduler</small></a>{% endif %}
+  <a href="#check"><span aria-hidden="true">{% if is_central %}3{% else %}1{% endif %}</span><strong>Check a timetable</strong><small>Find classes, rooms, and instructors</small></a>
+  <a href="#review"><span aria-hidden="true">{% if is_central %}4{% else %}2{% endif %}</span><strong>Review a schedule</strong><small>Endorse or request changes</small></a>
+  <a href="#problems"><span aria-hidden="true">?</span><strong>Solve a problem</strong><small>Common errors and what to do</small></a>
+</nav>
 
-{% if is_central %}
-<section class="panel" id="import" aria-labelledby="try-title">
-  <div class="panel__header">
-    <div><p class="eyebrow">Safe first run</p><h2 id="try-title">Try the complete workflow with synthetic data</h2></div>
-  </div>
-  <div class="resource-grid">
-    <article class="resource-card">
-      <h3>1. Download test data</h3>
-      <p>A fictional Kabacan-campus workbook exercises lectures, laboratories, a shared offering, team teaching, availability, room authorization, and a locked meeting.</p>
-      <a class="table-link" href="{% url 'api:trial-workbook' %}">Download synthetic workbook</a>
-    </article>
-    <article class="resource-card">
-      <h3>2. Preview before commit</h3>
-      <p>Open Data import, select a test term, acknowledge that the file is synthetic, and preview it. The system reports sheet, row, cell, and reason for every issue.</p>
-      <a class="table-link" href="{% url 'scheduler:imports' %}">Open Data import</a>
-    </article>
-    <article class="resource-card">
-      <h3>3. Generate both schedules</h3>
-      <p>Commit the clean preview, preflight the revision, and launch a CP-SAT/GA comparison from the same frozen problem snapshot.</p>
-      <a class="table-link" href="{% url 'scheduler:runs' %}">Open Generate schedule</a>
-    </article>
-  </div>
-</section>
-{% endif %}
+<div class="guide-layout">
+  <main class="guide-main">
+    {% if is_central %}
+    <section class="guide-section" id="prepare" aria-labelledby="prepare-title">
+      <span class="guide-section__number">1</span>
+      <div><p class="eyebrow">Prepare</p><h2 id="prepare-title">Set up the semester and its data</h2><ol><li>Open <a href="{% url 'scheduler:terms' %}">Academic Terms</a> and confirm the correct semester.</li><li>Download a workbook, enter the semester information, and open <a href="{% url 'scheduler:imports' %}">Prepare Data</a>.</li><li>Upload the workbook and choose <strong>Check workbook</strong>.</li><li>Correct every listed error. When the check is clean, save the prepared data.</li></ol><details class="explanation"><summary>Why does the workbook need to be checked?</summary><p>It prevents missing instructors, invalid room assignments, overlapping availability, and incomplete scheduling rules from reaching the scheduler.</p></details></div>
+    </section>
 
-<div class="content-grid content-grid--wide">
-  <section class="panel" aria-labelledby="workflow-guide-title">
-    <div class="panel__header"><div><p class="eyebrow">Core procedure</p><h2 id="workflow-guide-title">Seven controlled steps</h2></div></div>
-    <ol class="plain-list">
-      <li class="guide-step"><span class="guide-step__number">1</span><div><h3>Prepare an academic term</h3><p>Confirm academic year, semester, Kabacan campus, teaching days, atom length, and semester dates. Use a new dataset revision for every material change.</p></div></li>
-      <li class="guide-step"><span class="guide-step__number">2</span><div><h3>Prepare the workbook</h3><p>Enter catalog records, active sections, fixed instructors, room capabilities and authorizations, time atoms, availability, offerings, and meeting requirements. Do not add room capacity or identifiable student data to this v1 study.</p></div></li>
-      <li class="guide-step"><span class="guide-step__number">3</span><div><h3>Preview and commit</h3><p>Preview validates references and rules without changing the semester dataset. Correct every error, preview again, then commit the entire clean batch atomically.</p></div></li>
-      <li class="guide-step"><span class="guide-step__number">4</span><div><h3>Preflight and freeze input</h3><p>Select an approved objective profile. Preflight removes illegal room-time candidates and rejects missing availability, unusable locks, or meetings with no legal placement. Store the immutable snapshot and its hash.</p></div></li>
-      <li class="guide-step" id="generate"><span class="guide-step__number">5</span><div><h3>Generate and compare</h3><p>Run CP-SAT and the Genetic Algorithm with the same snapshot, objective, hardware allocation, and time limit. Feasibility comes first; compare quality only among independently validated schedules.</p></div></li>
-      <li class="guide-step" id="timetables"><span class="guide-step__number">6</span><div><h3>Review and revise</h3><p>College reviewers inspect their unit, comment, and endorse. The central scheduler resolves concerns, locks confirmed meetings when needed, and creates a child version for regeneration.</p></div></li>
-      <li class="guide-step"><span class="guide-step__number">7</span><div><h3>Approve and export</h3><p>Only a zero-hard-violation version can proceed. Central approval makes the version immutable; export the approved schedule and its reproducibility manifest for authorized distribution.</p></div></li>
-    </ol>
-  </section>
+    <section class="guide-section" id="generate" aria-labelledby="generate-title">
+      <span class="guide-section__number">2</span>
+      <div><p class="eyebrow">Generate</p><h2 id="generate-title">Build a candidate timetable</h2><ol><li>Open <a href="{% url 'scheduler:runs' %}">Generate Schedule</a>.</li><li>Choose the prepared semester and quality policy, then check the data.</li><li>Choose the checked dataset and keep the recommended method and <strong>Find a valid timetable</strong> goal.</li><li>Select <strong>Generate timetable</strong>. Keep the page open until the result appears.</li><li>If the result is still queued or running, use <strong>Refresh result</strong>. When a schedule is found, choose <strong>Open timetable</strong>.</li></ol><p class="guide-tip"><strong>Tip:</strong> The advanced Research tools are not needed to generate a normal timetable.</p></div>
+    </section>
+    {% endif %}
 
-  <aside class="panel" aria-labelledby="role-guide-title">
-    <div class="panel__header"><div><p class="eyebrow">Responsibilities</p><h2 id="role-guide-title">Who does what</h2></div></div>
-    <div class="guide-grid">
-      <article class="guide-card"><h3>System administrator</h3><p>Controls accounts, role assignments, configuration, backups, and platform maintenance. This role does not certify academic correctness.</p></article>
-      <article class="guide-card"><h3>Central scheduler</h3><p>Owns term preparation, imports, snapshots, optimization runs, final conflict checks, approvals, locks, and authorized exports.</p></article>
-      <article class="guide-card"><h3>College reviewer</h3><p>Views the complete timetable for context and comments or endorses only the assigned college scope.</p></article>
-    </div>
+    <section class="guide-section" id="check" aria-labelledby="check-title">
+      <span class="guide-section__number">{% if is_central %}3{% else %}1{% endif %}</span>
+      <div><p class="eyebrow">Check</p><h2 id="check-title">Inspect the timetable</h2><ol><li>Open <a href="{% url 'scheduler:schedules' %}">Timetables</a> and choose a version.</li><li>Use the weekly view for an overview or search the assignment list.</li><li>Check subjects, sections, instructors, rooms, days, and times.</li>{% if is_central %}<li>Run the independent validation before sending the schedule for review.</li>{% endif %}</ol></div>
+    </section>
 
-    <div class="panel__header"><div><p class="eyebrow">Interpretation</p><h2>Solver outcomes</h2></div></div>
-    <dl class="definition-list">
-      <div><dt>Optimal</dt><dd>CP-SAT found a feasible schedule and proved no better objective exists for that model.</dd></div>
-      <div><dt>Feasible</dt><dd>A zero-hard-violation schedule was found; optimality was not proved.</dd></div>
-      <div><dt>Infeasible</dt><dd>Use only when CP-SAT proves the model has no solution. GA cannot make this claim.</dd></div>
-      <div><dt>No solution found</dt><dd>The time-limited search ended without a validated feasible result; this does not prove impossibility.</dd></div>
-      <div><dt>Invalid input</dt><dd>Preflight found a data or policy problem that must be corrected before a fair algorithm run.</dd></div>
-    </dl>
+    <section class="guide-section" id="review" aria-labelledby="review-title">
+      <span class="guide-section__number">{% if is_central %}4{% else %}2{% endif %}</span>
+      <div><p class="eyebrow">Review</p><h2 id="review-title">Record a college decision</h2><ol><li>Open <a href="{% url 'scheduler:reviews' %}">Reviews</a>.</li><li>Open the timetable and verify the assignments for your college.</li><li>Choose <strong>Endorse</strong> when the schedule is correct, or <strong>Request changes</strong> and explain what must be fixed.</li>{% if is_central %}<li>Approve the schedule only after all required colleges endorse it.</li>{% endif %}</ol></div>
+    </section>
+
+    <section class="guide-section" id="problems" aria-labelledby="problems-title">
+      <span class="guide-section__number">?</span>
+      <div><p class="eyebrow">Troubleshooting</p><h2 id="problems-title">Common problems</h2>
+        <div class="faq-list">
+          <details><summary>The workbook has errors</summary><p>Start with missing references, then check availability, room permission, room capabilities, and locked meetings. Re-upload the corrected workbook.</p></details>
+          <details><summary>A meeting has no available placement</summary><p>Check its duration, instructor availability, room type, teaching-day boundaries, breaks, and college room authorization.</p></details>
+          <details><summary>Generation ended without a schedule</summary><p>This does not always mean a valid timetable is impossible. Review the result details, data check, and time limit before trying again.</p></details>
+          <details><summary>I cannot see an action button</summary><p>Your role or the schedule's current status may not allow that action. The central scheduler prepares and approves; college reviewers record assigned decisions.</p></details>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <aside class="guide-aside" aria-label="Resources and roles">
+    {% if is_central %}<section><h2>Practice safely</h2><p>Use fictional data bound to a selected term's approved rule policies.</p><a class="button button--secondary button--full" href="{% url 'scheduler:imports' %}#practice-workbook">Choose term and download</a><a class="text-link" href="{% url 'api:import-template' %}">Download blank template</a></section>{% endif %}
+    <section><h2>Who does what?</h2><dl class="role-list"><div><dt>Central scheduler</dt><dd>Prepares data, generates schedules, and manages approval.</dd></div><div><dt>College reviewer</dt><dd>Checks assigned college classes and records a decision.</dd></div><div><dt>Administrator</dt><dd>Manages accounts and system configuration.</dd></div></dl></section>
+    <section><h2>Research evaluation</h2><p>Algorithm experiments and technical evidence are kept separate from normal scheduling.</p><a class="text-link" href="{% url 'scheduler:research' %}">Open Research tools</a></section>
   </aside>
 </div>
-
-<section class="panel" aria-labelledby="resources-title">
-  <div class="panel__header"><div><p class="eyebrow">Reference material</p><h2 id="resources-title">Downloads and troubleshooting</h2></div></div>
-  <div class="resource-grid">
-    {% if is_central %}
-    <article class="resource-card"><h3>Blank import template</h3><p>Use the current versioned column structure for a real authorized semester.</p><a class="table-link" href="{% url 'api:import-template' %}">Download blank workbook</a></article>
-    {% endif %}
-    <article class="resource-card"><h3>Preview reports errors</h3><p>Use the reported sheet, row, cell, and code. Resolve missing references first, then availability, authorization, capabilities, and locks.</p></article>
-    <article class="resource-card"><h3>A meeting has no candidate</h3><p>Check its duration, break boundaries, fixed instructors, room capability, campus, availability, and every attached section's authorization rule.</p></article>
-    <article class="resource-card"><h3>A solver times out</h3><p>Keep the result as a recorded timeout. Do not call it infeasible, silently retry it, or alter only one algorithm's budget.</p></article>
-  </div>
-</section>
-
-<section class="inline-note" role="note">
-  <strong>Need the full handbook?</strong> The repository includes a printable, step-by-step guide with data-sheet definitions, test instructions, approval procedures, recovery guidance, and a glossary in <code>docs/user-guide.md</code>.
-</section>
 {% endblock %}

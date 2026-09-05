@@ -5,7 +5,9 @@ from __future__ import annotations
 import argparse
 import re
 from collections.abc import Iterable
+from io import BytesIO
 from pathlib import Path
+from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
 
 from docx import Document
 from docx.enum.style import WD_STYLE_TYPE
@@ -198,16 +200,31 @@ def _is_special_start(lines: list[str], index: int) -> bool:
     )
 
 
+def _start_numbered_list(document: Document) -> int:
+    """Reuse the numbered-list design without continuing an earlier list."""
+    numbering = document.part.numbering_part.element
+    style_num_id = document.styles["List Number"].element.pPr.numPr.numId.val
+    abstract_num_id = numbering.num_having_numId(style_num_id).abstractNumId.val
+    instance = numbering.add_num(abstract_num_id)
+    instance.add_lvlOverride(ilvl=0).add_startOverride(1)
+    return instance.numId
+
+
 def _add_markdown(document: Document, markdown: str) -> None:
     lines = markdown.splitlines()
     start = next((index for index, line in enumerate(lines) if line.startswith("## ")), 0)
     index = start
+    list_number_id: int | None = None
     while index < len(lines):
         line = lines[index]
         stripped = line.strip()
         if not stripped:
             index += 1
             continue
+
+        ordered = ORDERED_PATTERN.match(line)
+        if not ordered:
+            list_number_id = None
 
         heading = HEADING_PATTERN.match(line)
         if heading:
@@ -264,7 +281,6 @@ def _add_markdown(document: Document, markdown: str) -> None:
             continue
 
         bullet = line.lstrip().startswith("- ")
-        ordered = ORDERED_PATTERN.match(line)
         if bullet or ordered:
             content = line.lstrip()[2:] if bullet else ordered.group(1)  # type: ignore[union-attr]
             index += 1
@@ -275,6 +291,12 @@ def _add_markdown(document: Document, markdown: str) -> None:
             if continuations:
                 content = " ".join((content, *continuations))
             paragraph = document.add_paragraph(style="List Bullet" if bullet else "List Number")
+            if ordered:
+                if list_number_id is None:
+                    list_number_id = _start_numbered_list(document)
+                numbering = paragraph._p.get_or_add_pPr().get_or_add_numPr()
+                numbering.get_or_add_ilvl().val = 0
+                numbering.get_or_add_numId().val = list_number_id
             _add_inline_markdown(paragraph, content)
             continue
 
@@ -486,6 +508,20 @@ def _add_toc(document: Document) -> None:
     document.add_page_break()
 
 
+def _save_deterministic(document: Document, output_path: Path) -> None:
+    """Keep package order and ZIP timestamps stable for reproducible artifacts."""
+    package = BytesIO()
+    document.save(package)
+    package.seek(0)
+    with ZipFile(package) as source, ZipFile(
+        output_path, "w", compression=ZIP_DEFLATED, compresslevel=9
+    ) as destination:
+        for name in sorted(source.namelist()):
+            entry = ZipInfo(name, date_time=(2000, 1, 1, 0, 0, 0))
+            entry.compress_type = ZIP_DEFLATED
+            destination.writestr(entry, source.read(name), compresslevel=9)
+
+
 def build_document(
     markdown_path: Path,
     output_path: Path,
@@ -509,7 +545,7 @@ def build_document(
     _add_toc(document)
     _add_markdown(document, markdown)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    document.save(output_path)
+    _save_deterministic(document, output_path)
 
 
 def main() -> None:
@@ -544,7 +580,7 @@ def main() -> None:
         metadata=(
             "For system administrators, central scheduling personnel, and college reviewers",
             "Prepared by Ruby Jean B. Solomon and Edgardo Gabriel L. Paclibar",
-            "Version 1.0 · August 2026",
+            "Version 2.0 · August 2026",
         ),
     )
     print(f"Created Word documents in {args.output_dir.resolve()}")

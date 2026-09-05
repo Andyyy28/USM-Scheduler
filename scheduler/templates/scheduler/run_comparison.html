@@ -1,7 +1,7 @@
 {% extends 'scheduler/base.html' %}
 
 {% block content %}
-<header class="page-header"><div><p class="eyebrow">Controlled evaluation</p><h1>Compare algorithm runs</h1><p>Use runs from the same frozen problem instance and inspect feasibility before runtime or quality.</p></div><a class="button button--secondary" href="{% url 'scheduler:runs' %}">Run history</a></header>
+<header class="page-header"><div><p class="eyebrow">Controlled evaluation</p><h1>Compare algorithm runs</h1><p>Use runs from the same checked dataset and inspect feasibility before runtime or quality.</p></div><a class="button button--secondary" href="{% url 'scheduler:research' %}">Back to Research tools</a></header>
 
 <section class="panel form-panel" aria-labelledby="comparison-picker-title">
   <div class="panel__header"><div><p class="eyebrow">Pair selection</p><h2 id="comparison-picker-title">Choose two recorded runs</h2></div></div>
@@ -14,7 +14,7 @@
   <p class="form-status" data-comparison-status aria-live="polite"></p>
 </section>
 
-{% if left and right %}
+{% if left and right and not same_run_selected %}
   {% if comparable %}<section class="callout callout--success"><div><strong>Comparable problem instance</strong><p>The runs reference the same dataset snapshot or problem hash. Confirm their stopping budgets and quality weights also match.</p></div></section>{% else %}<section class="callout callout--warning"><div><strong>Dataset match could not be confirmed.</strong><p>Do not use this pair for a fairness claim unless the frozen snapshot, constraints, objective weights, and stopping budget are identical.</p></div></section>{% endif %}
   <section class="panel" aria-labelledby="comparison-table-title">
     <div class="panel__header"><div><p class="eyebrow">Feasibility-first readout</p><h2 id="comparison-table-title">Side-by-side metrics</h2></div></div>
@@ -31,6 +31,6 @@
     </tbody></table></div>
   </section>
 {% else %}
-  <section class="empty-state empty-state--prominent"><span class="empty-state__icon" aria-hidden="true">⇄</span><div><h2>Two runs are required</h2><p>Complete at least one CP-SAT and one Genetic Algorithm run on the same dataset snapshot.</p></div></section>
+  <section class="empty-state empty-state--prominent"><span class="empty-state__icon" aria-hidden="true">⇄</span><div><h2>{% if same_run_selected %}Choose two different runs{% else %}Two runs are required{% endif %}</h2><p>Complete at least one CP-SAT and one Genetic Algorithm run on the same dataset snapshot.</p></div></section>
 {% endif %}
 {% endblock %}

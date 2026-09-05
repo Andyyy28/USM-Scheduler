@@ -17,6 +17,7 @@ from scheduler.domain import (
 from scheduler.domain import ObjectiveProfile as DomainObjectiveProfile
 from scheduler.services.scaling import (
     DEFAULT_SCALING_SEED,
+    _project_instance_characteristics,
     create_scaling_snapshots,
     plan_scaling_snapshots,
 )
@@ -25,7 +26,44 @@ from tests.integration.test_experiments import _experiment_graph
 pytestmark = pytest.mark.django_db
 
 
-def _full_scaling_snapshot(suffix: str) -> dict[str, object]:
+def test_availability_density_uses_only_retained_instructors_and_full_room_pool() -> None:
+    input_data = {
+        "events": [
+            {
+                "event_id": "meeting-a",
+                "offering_id": "offering-a",
+                "instructor_ids": ["retained"],
+                "section_ids": ["section-a"],
+                "section_headcounts": [["section-a", 50]],
+                "meeting_headcount": 50,
+                "duration_atoms": 1,
+            }
+        ],
+        "time_atoms": [{"atom_id": "a"}, {"atom_id": "b"}],
+        "room_evidence": [
+            {"room_id": "room-a", "available_atom_ids": ["a", "b"]},
+            {"room_id": "room-b", "available_atom_ids": ["a"]},
+        ],
+        "instructor_evidence": [
+            {"instructor_id": "retained", "available_atom_ids": ["a", "b"]},
+            {"instructor_id": "not-retained", "available_atom_ids": []},
+        ],
+    }
+
+    result = _project_instance_characteristics(input_data, {"meeting-a": [{}]})
+
+    assert result["instructors"] == 1
+    assert result["rooms"] == 2
+    assert result["available_room_atoms"] == 3
+    assert result["availability_density"] == pytest.approx((1 + 0.5 + 1) / 3)
+
+
+def _full_scaling_snapshot(
+    suffix: str,
+    *,
+    locked_event_indexes: tuple[int, ...] = (0,),
+    add_second_meeting_to_first_offering: bool = False,
+) -> dict[str, object]:
     graph = _experiment_graph(suffix)
     revision = graph["revision"]
     user = graph["user"]
@@ -85,10 +123,14 @@ def _full_scaling_snapshot(suffix: str) -> dict[str, object]:
             authoritative_college=college,
             authoritative_department=department,
         )
+        # Deliberately offer the final second-college curriculum subject through
+        # the first college. Scaling strata must follow the offering department,
+        # not the curriculum's authoritative college.
+        offering_department = first_department if index == 7 else department
         offering = models.CourseOffering.objects.create(
             revision=revision,
             subject=subject,
-            offering_department=department,
+            offering_department=offering_department,
             external_key=f"SCALE-{suffix}-{index}",
         )
         models.OfferingSection.objects.create(
@@ -102,6 +144,15 @@ def _full_scaling_snapshot(suffix: str) -> dict[str, object]:
                 offering=offering,
                 component=models.MeetingComponent.LECTURE,
                 occurrence_number=1,
+                duration_atoms=1,
+            )
+        )
+    if add_second_meeting_to_first_offering:
+        meetings.append(
+            models.MeetingRequirement.objects.create(
+                offering=base_offering,
+                component=models.MeetingComponent.LECTURE,
+                occurrence_number=2,
                 duration_atoms=1,
             )
         )
@@ -146,11 +197,12 @@ def _full_scaling_snapshot(suffix: str) -> dict[str, object]:
         time_atoms=atoms,
         events=tuple(events),
         objective_profile=DomainObjectiveProfile(profile_id="approved-scaling-v1"),
-        locked_assignments=(
+        locked_assignments=tuple(
             Assignment(
-                event_id=events[0].event_id,
-                candidate_id=events[0].candidates[0].candidate_id,
-            ),
+                event_id=events[index].event_id,
+                candidate_id=events[index].candidates[0].candidate_id,
+            )
+            for index in locked_event_indexes
         ),
         metadata=(("source", "scaling-test"),),
     )
@@ -180,13 +232,76 @@ def test_scaling_plan_is_stable_nested_and_stratified_by_every_context() -> None
 
     assert first == second
     assert first.full_event_count == 8
-    assert set(dict(first.applicable_context_counts).values()) == {2}
+    first_college_id = graph["meeting"].offering.offering_department.college_id
+    second_college_id = models.College.objects.exclude(pk=first_college_id).get(
+        code="SC2-plan"
+    ).pk
+    assert dict(first.applicable_context_counts) == {
+        f"{first_college_id}:{models.SubjectClassification.GENERAL_EDUCATION}": 3,
+        f"{first_college_id}:{models.SubjectClassification.MAJOR}": 2,
+        f"{second_college_id}:{models.SubjectClassification.GENERAL_EDUCATION}": 1,
+        f"{second_college_id}:{models.SubjectClassification.MAJOR}": 2,
+    }
     assert [level.selected_event_count for level in first.levels] == [2, 4, 6, 8]
     selected_sets = [set(level.selected_event_ids) for level in first.levels]
     assert selected_sets[0] < selected_sets[1] < selected_sets[2] < selected_sets[3]
     assert selected_sets[-1] == {event.event_id for event in graph["events"]}
     assert all(len(level.selection_hash) == 64 for level in first.levels)
     assert all(sum(dict(level.context_counts).values()) == level.selected_offering_count for level in first.levels)
+
+
+def test_scaling_retains_all_locked_offerings_and_reports_forced_overage() -> None:
+    graph = _full_scaling_snapshot(
+        "locks",
+        locked_event_indexes=(0, 1, 2),
+        add_second_meeting_to_first_offering=True,
+    )
+    snapshot = graph["full_snapshot"]
+
+    plan = plan_scaling_snapshots(snapshot)
+    locked_event_ids = {
+        lock["event_id"] for lock in snapshot.input_data["locked_assignments"]
+    }
+    locked_offering_ids = {
+        event["offering_id"]
+        for event in snapshot.input_data["events"]
+        if event["event_id"] in locked_event_ids
+    }
+    first_offering_id = graph["meeting"].offering.external_key
+    first_offering_event_ids = {
+        event["event_id"]
+        for event in snapshot.input_data["events"]
+        if event["offering_id"] == first_offering_id
+    }
+
+    assert plan.full_event_count == 9
+    assert plan.full_locked_event_count == 3
+    assert plan.full_locked_offering_count == 3
+    assert set(plan.locked_offering_ids) == locked_offering_ids
+    assert set(plan.offering_order[:3]) == locked_offering_ids
+    assert plan.levels[0].target_offering_count == 2
+    assert plan.levels[0].selected_offering_count == 3
+    assert plan.levels[0].selected_event_count == 4
+    assert plan.levels[0].actual_event_percentage == 44.444444
+    assert plan.levels[0].actual_offering_percentage == 37.5
+    assert plan.levels[0].forced_offering_overage == 1
+    for level in plan.levels:
+        assert level.locked_retention_satisfied is True
+        assert level.locked_offering_count == 3
+        assert level.retained_locked_offering_count == 3
+        assert level.selected_lock_count == 3
+        assert locked_offering_ids <= set(level.selected_offering_ids)
+        assert first_offering_event_ids <= set(level.selected_event_ids)
+
+    snapshots = create_scaling_snapshots(snapshot, graph["user"])
+    metadata = dict(snapshots[25].input_data["metadata"])
+    assert metadata["scaling_actual_event_percentage"] == "44.444444"
+    assert metadata["scaling_actual_offering_percentage"] == "37.5"
+    assert metadata["scaling_forced_offering_overage"] == "1"
+    assert metadata["scaling_locked_event_count"] == "3"
+    assert metadata["scaling_locked_offering_count"] == "3"
+    assert metadata["scaling_retained_locked_offering_count"] == "3"
+    assert metadata["scaling_locked_retention_satisfied"] == "true"
 
 
 def test_scaling_snapshots_preserve_domains_locks_are_idempotent_and_reuse_full() -> None:

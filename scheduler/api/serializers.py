@@ -16,13 +16,46 @@ class AcademicTermSerializer(serializers.ModelSerializer):
 
 class TermDatasetRevisionSerializer(serializers.ModelSerializer):
     term = AcademicTermSerializer(read_only=True)
+    data_origin_display = serializers.CharField(source="get_data_origin_display", read_only=True)
+    source_filename = serializers.SerializerMethodField()
+    section_count = serializers.SerializerMethodField()
+    meeting_count = serializers.SerializerMethodField()
+    room_count = serializers.SerializerMethodField()
+    instructor_count = serializers.SerializerMethodField()
 
     class Meta:
         model = models.TermDatasetRevision
         fields = [
             "id", "term", "revision_number", "status", "label", "content_hash",
-            "created_at", "committed_at",
+            "data_origin", "data_origin_display", "source_filename", "section_count",
+            "meeting_count", "room_count", "instructor_count", "created_at", "committed_at",
         ]
+
+    def get_source_filename(self, obj):
+        try:
+            return obj.source_import_batch.original_filename
+        except models.ImportBatch.DoesNotExist:
+            return ""
+
+    @staticmethod
+    def _count(obj, annotation, relation):
+        value = getattr(obj, annotation, None)
+        return value if value is not None else getattr(obj, relation).count()
+
+    def get_section_count(self, obj):
+        return self._count(obj, "section_count", "sections")
+
+    def get_meeting_count(self, obj):
+        value = getattr(obj, "meeting_count", None)
+        if value is not None:
+            return value
+        return models.MeetingRequirement.objects.filter(offering__revision=obj).count()
+
+    def get_room_count(self, obj):
+        return self._count(obj, "room_count", "room_availability_profiles")
+
+    def get_instructor_count(self, obj):
+        return self._count(obj, "instructor_count", "instructor_availability_profiles")
 
 
 class ObjectiveProfileSerializer(serializers.ModelSerializer):
@@ -43,6 +76,40 @@ class ProblemSnapshotSerializer(serializers.ModelSerializer):
             "id", "revision", "objective_profile_id", "schema_version", "snapshot_hash",
             "event_count", "candidate_count", "preprocessing_seconds", "created_at",
         ]
+
+
+class ExperimentStudySerializer(serializers.ModelSerializer):
+    batch_count = serializers.IntegerField(source="batches.count", read_only=True)
+    run_count = serializers.SerializerMethodField()
+
+    class Meta:
+        model = models.ExperimentStudy
+        fields = [
+            "id",
+            "name",
+            "mode",
+            "protocol_version",
+            "status",
+            "source_snapshot_id",
+            "scale_percentages",
+            "seeds",
+            "order_seed",
+            "deadline_seconds",
+            "cpu_limit",
+            "memory_limit_mb",
+            "warmups_per_algorithm_scale",
+            "manifest_hash",
+            "protocol_integrity",
+            "invalid_reason",
+            "batch_count",
+            "run_count",
+            "created_at",
+            "updated_at",
+            "cancelled_at",
+        ]
+
+    def get_run_count(self, obj):
+        return models.ScheduleRun.objects.filter(experiment_batch__study=obj).count()
 
 
 class ExperimentBatchSerializer(serializers.ModelSerializer):
@@ -91,10 +158,14 @@ class ScheduleRunSerializer(serializers.ModelSerializer):
         model = models.ScheduleRun
         fields = [
             "id", "snapshot_id", "experiment_batch_id", "algorithm", "algorithm_display",
-            "seed", "status", "configuration", "queued_at", "started_at", "finished_at",
+            "seed", "purpose", "pair_attempt", "planned_order", "actual_order",
+            "replacement_for_id", "included_in_analysis", "exclusion_reason", "status",
+            "configuration", "configuration_hash", "queued_at", "started_at", "finished_at",
             "first_feasible_seconds", "execution_seconds", "objective_value", "best_bound",
             "relative_gap", "hard_violation_count", "stopping_reason", "diagnostics",
-            "error_message", "metrics", "validation", "schedule_version_id",
+            "process_cpu_seconds", "peak_rss_mb", "failure_category",
+            "failure_classified_at", "error_message", "metrics", "validation",
+            "schedule_version_id",
         ]
 
     def get_validation(self, obj):
@@ -168,11 +239,13 @@ class ImportErrorSerializer(serializers.ModelSerializer):
 class ImportBatchSerializer(serializers.ModelSerializer):
     errors = ImportErrorSerializer(many=True, read_only=True)
     safe_summary = serializers.SerializerMethodField()
+    data_origin_display = serializers.CharField(source="get_data_origin_display", read_only=True)
 
     class Meta:
         model = models.ImportBatch
         fields = [
-            "id", "term_id", "original_filename", "file_hash", "status", "total_rows",
+            "id", "term_id", "original_filename", "file_hash", "data_origin",
+            "data_origin_display", "status", "total_rows",
             "error_count", "safe_summary", "committed_revision_id", "created_at", "errors",
         ]
 

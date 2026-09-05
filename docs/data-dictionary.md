@@ -20,7 +20,7 @@ This dictionary describes the implemented relational model. Most mutable operati
 |---|---|---|
 | `AcademicTerm` | Semester container; academic year, semester, campus, start/end dates, status | Unique year/semester/campus; end follows start. Status: draft, active, closed, archived. |
 | `TermDatasetRevision` | Versioned complete input for a term; revision number, label, status, content hash | Unique number per term and unique nonblank hash per term. Committed/superseded revisions require a hash and are immutable. |
-| `Section` | Active scheduling cohort for a revision; code, year level, incoming/continuing/graduating status | Unique code per revision; year level 1–10; belongs to a program. Inactive sections do not become solver events. |
+| `Section` | Active scheduling cohort for a revision; code, year level, incoming/continuing/graduating status, expected enrollment | Unique code per revision; year level 1–10; belongs to a program. Expected enrollment is optional for legacy/routine data but, when present, is 1–50 and is mandatory for formal snapshots. Inactive sections do not become solver events. |
 | `Student` | Optional pseudonymous learner record; pseudonymous code and status | No name or institutional student number. Not required when section conflict control is sufficient. |
 | `StudentSectionMembership` | Optional student-to-section link | Unique student/section pair; supports section membership evidence without making the individual a solver resource. |
 
@@ -37,11 +37,13 @@ Each term can have several draft revisions, but every experiment and schedule re
 | `RoomCapability` | Room-to-capability bridge | Unique room/capability pair. |
 | `RoomAuthorization` | Revision-specific permission to use a room for a curricular classification | Links room, classification, and exactly one college or department. Ownership alone does not grant authorization. |
 | `TimeSlot` | Smallest time atom; day, sequence, start/end, break flag, active flag | Belongs to one revision; day/sequence and day/start are unique; weekday 0–6; end follows start. |
-| `InstructorAvailabilityProfile` | Completeness declaration for one instructor/revision | Unique pair. “Assume fully available” requires named acknowledgement and time. |
+| `InstructorAvailabilityProfile` | Completeness and daily-load declaration for one instructor/revision | Unique pair. “Assume fully available” requires named acknowledgement and time. Formal data chooses either a positive maximum daily teaching-atom count or an explicit approved no-limit acknowledgement, never both. |
 | `InstructorAvailability` | Availability for one instructor profile/time atom | Unique profile/slot; both use the same revision. |
 | `RoomAvailabilityProfile` | Completeness declaration for one room/revision | Unique pair; room campus matches term. Full-availability assumption requires acknowledgement. |
 | `RoomAvailability` | Availability for one room profile/time atom | Unique profile/slot; both use the same revision. |
 | `InstructorPreference` | Optional preferred/avoid signal and positive weight | Unique profile/slot and same revision. Preference never overrides hard availability. |
+| `ReservedTimeBlock` | Approved recurring teaching exclusion; scope, target, label, reason, policy, active flag | Belongs to one revision and targets exactly institution, college, department, program, or section. The policy must be approved for the same term. |
+| `ReservedTimeBlockSlot` | Connects one reserved block to an exact weekly time atom | Unique block/slot pair; block and slot share a revision. |
 
 The room design separates **kind**, **capability**, **ownership**, and **authorization**. A laboratory can be owned by one department yet authorized as a shared facility for another unit or classification.
 
@@ -63,8 +65,13 @@ The room design separates **kind**, **capability**, **ownership**, and **authori
 |---|---|---|
 | `ImportBatch` | Staged workbook metadata; filename, SHA-256 file hash, status, totals, summary | Belongs to term/uploader; file hash is unique per term. A committed batch references its committed revision. |
 | `ImportError` | Sheet/row/column validation error with stable code/message | Many per batch; supports correction without partial commit. |
+| `ConstraintPolicyVersion` | Versioned provenance for one hard or soft rule; code, version, definition, owner, source, effective term, parameters, approval, SHA-256 hash | Unique rule/version/effective-term tuple. Approved versions require an approver/time and become immutable. |
 | `ObjectiveProfile` | Versioned soft policy; weights, definitions, normalizers, SHA-256 hash, approval | Unique name/version/term; weights nonnegative. Approved profiles require approver/time and become immutable. |
-| `ProblemSnapshot` | Canonical solver input and candidate map with schema/hash | Links one revision and objective profile. The entire row is immutable and hash is globally unique. |
+| `ProblemSnapshot` | Canonical solver input and candidate map with schema/hash | Links one revision and objective profile. New formal snapshots freeze the approved constraint manifest, fixed 50-student rule, unique meeting headcounts, reserved-block evidence, and daily-load evidence. The entire row is immutable and hash is globally unique. |
+
+The fixed 50-student rule is not a room-capacity field. A combined meeting sums
+each unique attached section once; 51 or more blocks snapshot creation for every
+room type. `Room` deliberately stores no capacity, chairs, or floor area.
 
 Hashes support integrity and exact reruns; they do not anonymize sensitive data.
 

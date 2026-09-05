@@ -2,70 +2,60 @@
 
 {% block content %}
 <header class="page-header">
-  <div><p class="eyebrow">Schedule generation</p><h1>Generate and compare schedules</h1><p>Check the semester data, generate a candidate timetable, and inspect every recorded result from one workspace.</p></div>
-  <div class="page-actions"><a class="button button--secondary" href="{% url 'scheduler:help' %}#generate">How to generate</a><a class="button button--secondary" href="{% url 'scheduler:run-comparison' %}">Compare two runs</a></div>
+  <div><p class="eyebrow">Generate Schedule</p><h1>Build a timetable</h1><p>First check the prepared semester data, then choose how the schedule should be generated.</p></div>
+  <a class="button button--secondary" href="{% url 'scheduler:help' %}#generate">View instructions</a>
 </header>
 
 {% if is_central %}
-<section class="panel form-panel" id="preflight" aria-labelledby="preflight-title">
-  <div class="panel__header"><div><p class="eyebrow">Step 1 · Data check</p><h2 id="preflight-title">Check and freeze the scheduling data</h2><p class="muted">This verifies the selected semester revision and records one unchanged input for fair, repeatable runs.</p></div><span class="tag">Required first</span></div>
-  <form class="form-grid" action="{% url 'api:snapshots' %}" method="post" data-api-form data-success-url="{% url 'scheduler:runs' %}">
-    {% csrf_token %}
-    <div class="field"><label for="snapshot-revision">Validated semester revision</label><select id="snapshot-revision" name="revision_id" required><option value="">Select a semester revision</option>{% for revision in revisions %}<option value="{{ revision.id }}">{{ revision }}</option>{% endfor %}</select><small>Only committed revisions can become solver input.</small></div>
-    <div class="field"><label for="snapshot-objective">Approved schedule-quality policy</label><select id="snapshot-objective" name="objective_profile_id" required><option value="">Select an approved policy</option>{% for profile in objective_profiles %}<option value="{{ profile.id }}">{{ profile }}</option>{% endfor %}</select><small>Weights and definitions are recorded with the resulting snapshot.</small></div>
-    <div class="form-actions form-actions--full"><p class="form-status" data-form-status aria-live="polite"></p><button class="button button--primary" type="submit" {% if not revisions or not objective_profiles %}disabled aria-disabled="true"{% endif %}>Check data and create snapshot</button></div>
-  </form>
-</section>
-
-<section class="panel form-panel" id="new-run" aria-labelledby="new-run-title">
-  <div class="panel__header"><div><p class="eyebrow">Step 2 · Generate</p><h2 id="new-run-title">Generate a candidate schedule</h2><p class="muted">The run continues in the background. You may leave this page and return to the history below.</p></div><span class="tag">Background job</span></div>
-  <form class="form-grid" action="{% url 'api:runs' %}" method="post" data-api-form data-success-url="{% url 'scheduler:runs' %}">
-    {% csrf_token %}
-    <div class="field"><label for="run-snapshot">Checked scheduling dataset</label><select id="run-snapshot" name="snapshot_id" required><option value="">Select checked data</option>{% for snapshot in snapshots %}<option value="{{ snapshot.id }}">{{ snapshot.term }} · {{ snapshot.event_count }} meetings · {{ snapshot.short_hash }}</option>{% endfor %}</select><small>The short code identifies the exact frozen input.</small></div>
-    <div class="field"><label for="run-algorithm">Scheduling method</label><select id="run-algorithm" name="algorithm" required><option value="CP_SAT">CP-SAT constraint solver</option><option value="GA">Genetic Algorithm</option></select><small>Both methods use the same legal placements and quality policy.</small></div>
-    <div class="field"><label for="run-time-limit">Maximum run time</label><input id="run-time-limit" name="time_limit_seconds" type="number" min="1" max="3600" value="300" required><small>Seconds; thesis comparison default: 300.</small></div>
-    <div class="field"><label for="run-seed">Repeatability seed</label><input id="run-seed" name="seed" type="number" min="0" value="42" required><small>Use the same value to repeat a configured run.</small></div>
-    <div class="form-actions form-actions--full"><p class="form-status" data-form-status aria-live="polite"></p><button class="button button--primary" type="submit" {% if not snapshots %}disabled aria-disabled="true"{% endif %}>Start schedule generation</button></div>
-  </form>
-</section>
-
-<details class="advanced-section" id="new-experiment">
-  <summary><span><span class="eyebrow">Advanced research tools</span>Create the controlled 30-seed algorithm comparison</span><span class="tag">60 sequential runs</span></summary>
-  <section class="panel form-panel" aria-labelledby="new-experiment-title">
-    <div class="panel__header"><div><p class="eyebrow">Thesis protocol</p><h2 id="new-experiment-title">Controlled CP-SAT and GA experiment</h2><p class="muted">Use this only for the formal evaluation. Routine timetable generation needs one run above.</p></div></div>
-    <form class="form-grid" action="{% url 'api:experiments' %}" method="post" data-api-form data-success-url="{% url 'scheduler:runs' %}">
+<div class="step-panels">
+  <section class="panel form-panel step-panel" id="data-check" aria-labelledby="data-check-title">
+    <div class="step-panel__heading"><span>1</span><div><p class="eyebrow">Check the data</p><h2 id="data-check-title">Make sure the semester is ready</h2><p>The system checks rooms, times, instructors, and scheduling rules before generation.</p></div></div>
+    <form class="form-grid" action="{% url 'api:snapshots' %}" method="post" data-api-form data-success-url="{% url 'scheduler:runs' %}">
       {% csrf_token %}
-      <div class="field"><label for="experiment-snapshot">Checked scheduling dataset</label><select id="experiment-snapshot" name="snapshot_id" required><option value="">Select checked data</option>{% for snapshot in snapshots %}<option value="{{ snapshot.id }}">{{ snapshot.term }} · {{ snapshot.short_hash }}</option>{% endfor %}</select></div>
-      <div class="field"><label for="experiment-name">Experiment name</label><input id="experiment-name" name="name" type="text" placeholder="Full-term CP-SAT vs GA"></div>
-      <div class="field"><label for="experiment-seeds">Fixed random seeds</label><input id="experiment-seeds" name="seeds" type="text" value="1001,1002,1003,1004,1005,1006,1007,1008,1009,1010,1011,1012,1013,1014,1015,1016,1017,1018,1019,1020,1021,1022,1023,1024,1025,1026,1027,1028,1029,1030" required></div>
-      <div class="field"><label for="experiment-time">Time budget per algorithm</label><input id="experiment-time" name="time_limit_seconds" type="number" min="1" value="300" required><small>Seconds for each of the 60 measured trials.</small></div>
-      <input type="hidden" name="order_seed" value="20260824">
-      <div class="form-actions form-actions--full"><p class="form-status" data-form-status aria-live="polite"></p><button class="button button--primary" type="submit" {% if not snapshots %}disabled aria-disabled="true"{% endif %}>Create research batch</button></div>
+      <div class="field"><label for="snapshot-revision">Prepared semester data</label><select id="snapshot-revision" name="revision_id" required data-dataset-select aria-controls="selected-dataset-details"><option value="">Choose prepared data</option>{% for revision in revisions %}<option value="{{ revision.id }}" data-label="{{ revision.label }}" data-source="{{ revision.source_filename }}" data-origin="{{ revision.data_origin }}" data-committed="{{ revision.committed_at|date:'M j, Y · H:i'|default:'Not recorded' }}" data-sections="{{ revision.section_count }}" data-meetings="{{ revision.meeting_count }}" data-rooms="{{ revision.room_count }}" data-instructors="{{ revision.instructor_count }}">{{ revision.option_label }}</option>{% endfor %}</select><small>Only data that passed workbook validation is listed.</small></div>
+      <div class="field"><label for="snapshot-objective">Schedule quality policy</label><select id="snapshot-objective" name="objective_profile_id" required><option value="">Choose a quality policy</option>{% for profile in objective_profiles %}<option value="{{ profile.id }}">{{ profile }}</option>{% endfor %}</select><small>This controls preferences such as gaps and room usage.</small></div>
+      <section class="dataset-details form-actions--full" id="selected-dataset-details" data-dataset-details aria-live="polite" hidden><h3>Selected dataset</h3><dl><div><dt>Label</dt><dd data-dataset-field="label"></dd></div><div><dt>Filename / source</dt><dd data-dataset-field="source"></dd></div><div><dt>Origin</dt><dd data-dataset-field="origin"></dd></div><div><dt>Committed</dt><dd data-dataset-field="committed"></dd></div><div><dt>Sections</dt><dd data-dataset-field="sections"></dd></div><div><dt>Meetings</dt><dd data-dataset-field="meetings"></dd></div><div><dt>Rooms</dt><dd data-dataset-field="rooms"></dd></div><div><dt>Instructors</dt><dd data-dataset-field="instructors"></dd></div></dl></section>
+      <div class="form-actions form-actions--full"><div class="form-status" data-form-status aria-live="polite"></div><button class="button button--primary" type="submit" {% if not revisions or not objective_profiles %}disabled aria-disabled="true"{% endif %}>Check semester data</button></div>
     </form>
+    <details class="explanation"><summary>What happens during this check?</summary><p>The system creates a protected copy of the prepared data so every scheduling attempt uses exactly the same inputs. Research reports call this a problem snapshot.</p></details>
   </section>
-</details>
-{% else %}<section class="callout callout--info"><div><strong>Results are available in read-only mode</strong><p>The central scheduling team prepares inputs and starts generation. Reviewers can inspect recorded results and open the candidate timetables without changing research settings.</p></div></section>{% endif %}
 
-<section class="panel" aria-labelledby="experiment-history-title">
-  <div class="panel__header"><div><p class="eyebrow">Controlled studies</p><h2 id="experiment-history-title">Experiment batches</h2></div></div>
-  {% if experiments %}<div class="table-wrap"><table><caption class="visually-hidden">Controlled CP-SAT and Genetic Algorithm experiment batches</caption><thead><tr><th scope="col">Batch</th><th scope="col">Status</th><th scope="col">Seeds / runs</th><th scope="col">Budget</th><th scope="col">Created</th><th scope="col">Actions</th></tr></thead><tbody>{% for batch in experiments %}<tr><td><strong>{{ batch.name }}</strong><small class="cell-note">{{ batch.snapshot|truncatechars:40 }}</small></td><td><span class="status status--{{ batch.status_class }}">{{ batch.status }}</span></td><td>{{ batch.seeds }} seeds · {{ batch.run_count }} runs</td><td>{{ batch.time_limit }} s each</td><td>{{ batch.created_at|date:'M j, Y · H:i'|default:'—' }}</td><td><div class="decision-actions"><a class="text-button" href="{% url 'scheduler:experiment-detail' batch.id %}">Report</a><a class="text-button" href="{% url 'api:experiment-export' batch.id 'csv' %}">CSV</a><a class="text-button" href="{% url 'api:experiment-export' batch.id 'json' %}">JSON</a>{% if batch.can_queue and is_central %}<form action="{% url 'api:experiment-queue' batch.id %}" method="post" data-api-form>{% csrf_token %}<button class="text-button text-button--success" type="submit" data-confirm="Queue all planned CP-SAT and GA trials sequentially?">Queue</button></form>{% endif %}</div></td></tr>{% endfor %}</tbody></table></div>{% else %}<div class="empty-state"><div><h3>No controlled batches</h3><p>Create one after the quality policy and scheduling dataset are frozen.</p></div></div>{% endif %}
-</section>
+  <section class="panel form-panel step-panel" id="new-run" aria-labelledby="new-run-title">
+    <div class="step-panel__heading"><span>2</span><div><p class="eyebrow">Generate</p><h2 id="new-run-title">Build a candidate timetable</h2><p>{% if local_execution %}Keep this page open while generation runs. Your result will open automatically.{% else %}Submit an attempt to the scheduling worker, then open its result to check progress.{% endif %}</p></div></div>
+    <form class="form-grid" action="{% url 'api:runs' %}" method="post" data-api-form data-run-form data-loading-message="Generating your timetable… This may take up to the maximum run time. Keep this page open until the result appears." data-success-url="{% url 'scheduler:runs' %}">
+      {% csrf_token %}
+      <div class="field"><label for="run-snapshot">Checked semester data</label><select id="run-snapshot" name="snapshot_id" required><option value="">Choose checked data</option>{% for snapshot in snapshots %}<option value="{{ snapshot.id }}" {% if retry_run.snapshot_id == snapshot.id %}selected{% endif %}>{{ snapshot.option_label }}</option>{% endfor %}</select><small>Run step 1 first if the correct semester is not listed.</small></div>
+      <div class="field"><label for="run-algorithm">Scheduling method</label><select id="run-algorithm" name="algorithm" required><option value="CP_SAT" {% if retry_run.algorithm_value == 'CP_SAT' %}selected{% endif %}>Constraint solver (recommended)</option><option value="GA" {% if retry_run.algorithm_value == 'GA' %}selected{% endif %}>Genetic Algorithm</option></select><small>The constraint solver is the default for routine schedule generation.</small></div>
+      {% if retry_run %}<p class="form-actions--full">Settings copied from attempt #{{ retry_run.id }}. Submitting creates a new attempt and keeps the previous result.</p>{% endif %}
+      <div class="field form-actions--full"><label for="run-goal">Generation goal</label><select id="run-goal" name="first_feasible_only"><option value="true">Find a valid timetable (recommended)</option><option value="false">Use the full time to improve timetable quality</option></select><small>The recommended option stops after a complete timetable passes all scheduling rules. Quality improvement keeps searching for fewer gaps and better preferences.</small></div>
+      <div class="field"><label for="run-time-limit">Maximum run time (seconds)</label><input id="run-time-limit" name="time_limit_seconds" type="number" min="1" max="3600" value="{{ retry_run.retry_time_limit|default:300 }}" required><small>300 seconds = 5 minutes. If time runs out, try 600 seconds. A longer limit does not guarantee a timetable.</small></div>
+      <div class="field"><label for="run-seed">Random seed</label><input id="run-seed" name="seed" type="number" min="0" value="{% if retry_run %}{{ retry_run.seed }}{% else %}42{% endif %}" required><small>Keep 42 to start. A different number changes the search; it is not an attempt counter.</small></div>
+      <div class="form-actions form-actions--full"><div class="form-status" data-form-status aria-live="polite"></div><button class="button button--primary" type="submit" {% if not snapshots %}disabled aria-disabled="true"{% endif %}>Generate timetable</button></div>
+    </form>
+    <details class="explanation"><summary>About scheduling methods and random seeds</summary><p>Advanced settings support repeatable thesis evaluation. Most staff can keep the recommended method and default values.</p></details>
+  </section>
+</div>
+{% else %}
+<section class="callout callout--info"><div><strong>Schedule generation is managed centrally</strong><p>You can view completed runs here. Only central schedulers can prepare data or start a new run.</p></div></section>
+{% endif %}
 
 <section class="panel" aria-labelledby="run-history-title">
   <div class="panel__header panel__header--tools">
-    <div><p class="eyebrow">Recorded results</p><h2 id="run-history-title">Run history</h2></div>
+    <div><p class="eyebrow">Recent activity</p><h2 id="run-history-title">Generated schedules</h2><p class="muted">Open a result to see whether it completed and view its timetable.</p></div>
     <form class="filter-row" method="get">
-      <div class="field"><label for="algorithm-filter">Algorithm</label><select id="algorithm-filter" name="algorithm"><option value="">All</option><option value="cp-sat" {% if selected_algorithm == 'cp-sat' %}selected{% endif %}>CP-SAT</option><option value="genetic-algorithm" {% if selected_algorithm == 'genetic-algorithm' %}selected{% endif %}>Genetic Algorithm</option></select></div>
-      <div class="field"><label for="status-filter">Status</label><select id="status-filter" name="status"><option value="">All</option><option value="feasible" {% if selected_status == 'feasible' %}selected{% endif %}>Feasible</option><option value="optimal" {% if selected_status == 'optimal' %}selected{% endif %}>Optimal</option><option value="infeasible" {% if selected_status == 'infeasible' %}selected{% endif %}>Infeasible</option><option value="running" {% if selected_status == 'running' %}selected{% endif %}>Running</option><option value="error" {% if selected_status == 'error' %}selected{% endif %}>Error</option></select></div>
-      <button class="button button--compact button--secondary" type="submit">Apply</button>
+      <div class="field"><label for="algorithm-filter">Method</label><select id="algorithm-filter" name="algorithm"><option value="">All methods</option><option value="cp-sat" {% if selected_algorithm == 'cp-sat' %}selected{% endif %}>Constraint solver</option><option value="genetic-algorithm" {% if selected_algorithm == 'genetic-algorithm' %}selected{% endif %}>Genetic Algorithm</option></select></div>
+      <div class="field"><label for="status-filter">Status</label><select id="status-filter" name="status"><option value="">All statuses</option><option value="feasible" {% if selected_status == 'feasible' %}selected{% endif %}>Schedule found</option><option value="optimal" {% if selected_status == 'optimal' %}selected{% endif %}>Best schedule found</option><option value="infeasible" {% if selected_status == 'infeasible' %}selected{% endif %}>No valid schedule</option><option value="queued" {% if selected_status == 'queued' %}selected{% endif %}>Queued</option><option value="no-solution" {% if selected_status == 'no-solution' %}selected{% endif %}>No feasible solution found</option><option value="timeout" {% if selected_status == 'timeout' %}selected{% endif %}>Timed out</option><option value="cancelled" {% if selected_status == 'cancelled' %}selected{% endif %}>Cancelled</option><option value="running" {% if selected_status == 'running' %}selected{% endif %}>Running</option><option value="error" {% if selected_status == 'error' %}selected{% endif %}>Error</option></select></div>
+      <button class="button button--compact button--secondary" type="submit">Apply filters</button>
     </form>
   </div>
   {% if runs %}
-    <div class="table-wrap"><table><caption class="visually-hidden">Recorded schedule-generation runs</caption><thead><tr><th scope="col">Run</th><th scope="col">Dataset</th><th scope="col">Status</th><th scope="col">Runtime</th><th scope="col">Hard violations</th><th scope="col">Quality penalty</th><th scope="col">Created</th></tr></thead><tbody>
-    {% for run in runs %}<tr><td><a class="table-link" href="{% url 'scheduler:run-detail' run.id %}"><strong>{{ run.algorithm }}</strong></a><small class="cell-note">Seed {{ run.seed }} · {{ run.id|truncatechars:14 }}</small></td><td>{{ run.term }}<small class="cell-note">{{ run.snapshot|truncatechars:32 }}</small></td><td><span class="status status--{{ run.status_class }}">{{ run.status }}</span></td><td>{{ run.runtime }}</td><td>{{ run.hard_violations }}</td><td>{{ run.objective }}</td><td>{{ run.created_at|date:'M j, Y · H:i'|default:'—' }}</td></tr>{% endfor %}
+    <div class="table-wrap"><table><caption class="visually-hidden">Generated schedule history</caption><thead><tr><th scope="col">Method</th><th scope="col">Semester</th><th scope="col">Status</th><th scope="col">Runtime</th><th scope="col">Rule violations</th><th scope="col">Created</th><th scope="col"><span class="visually-hidden">Open</span></th></tr></thead><tbody>
+    {% for run in runs %}<tr><td><strong>{{ run.algorithm }}</strong><small class="cell-note">Attempt #{{ run.id }}</small></td><td>{{ run.term }}</td><td><span class="status status--{{ run.status_class }}">{{ run.status }}</span></td><td>{{ run.runtime }}</td><td>{{ run.hard_violations }}</td><td>{{ run.created_at|date:'M j, Y · H:i'|default:'—' }}</td><td><a class="table-link" href="{% url 'scheduler:run-detail' run.id %}">View result</a></td></tr>{% endfor %}
     </tbody></table></div>
   {% else %}
-    <div class="empty-state"><span class="empty-state__icon" aria-hidden="true">▶</span><div><h3>No matching runs</h3><p>Clear the filters or queue the first algorithm run for a validated term.</p></div></div>
+    <div class="empty-state"><div><h3>No generated schedules found</h3><p>Clear the filters or complete the two steps above to generate one.</p></div></div>
   {% endif %}
 </section>
+
+<aside class="research-link"><div><strong>Doing the thesis evaluation?</strong><p>Algorithm comparisons, experiment batches, seeds, and reproducibility reports are in Research tools.</p></div><a class="button button--secondary" href="{% url 'scheduler:research' %}">Open Research tools</a></aside>
 {% endblock %}

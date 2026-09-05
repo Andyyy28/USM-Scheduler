@@ -77,6 +77,7 @@ def test_clone_remaps_every_revision_input_and_excludes_solver_artifacts_and_loc
     assert clone.term.semester == models.Semester.SECOND
     assert clone.term.campus == source.term.campus
     assert clone.created_by == actor
+    assert clone.data_origin == source.data_origin == models.DatasetOrigin.SYNTHETIC
 
     assert clone.sections.count() == source.sections.count()
     assert clone.time_slots.count() == source.time_slots.count()

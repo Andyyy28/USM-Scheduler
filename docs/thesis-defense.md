@@ -41,7 +41,12 @@ CP-SAT is well suited to discrete exactly-one and no-overlap constraints and can
 
 ### Is the comparison fair if CP-SAT is built for constraints?
 
-Both receive identical legal candidates, locks, hard definitions, shared soft scorer, seeds, one worker, and deadline. GA uses hard-first fitness/repair; neither validates itself. The study reports feasibility first and acknowledges CP-SAT proof capability rather than pretending both algorithms have identical theoretical guarantees.
+Both receive identical legal candidates, locks, hard definitions, shared soft
+scorer, seeds, one worker, and deadline. Each receives the same 30-minute
+synthetic tuning budget before its profile is frozen. GA uses hard-first
+fitness/repair; neither validates itself. The study reports feasibility first
+and acknowledges CP-SAT proof capability rather than pretending both algorithms
+have identical theoretical guarantees.
 
 ### Why might CP-SAT win? Does that make the thesis obvious?
 
@@ -59,9 +64,14 @@ Subject classification is curriculum-specific through `ProgramSubject`. Room own
 
 The same catalog subject can be major in one curriculum and service/minor in another. Classification and authoritative unit therefore belong to the program/curriculum relationship and are validated through the offering-section link.
 
-### Why no room capacity?
+### How does the 50-student rule differ from room capacity?
 
-The approved scope explicitly excludes physical chair/capacity optimization. The schema can be extended later, but adding unreliable enrollment/capacity data would broaden the research question and threaten completion. Room utilization is room-time, not seats.
+Every section and combined meeting has a frozen expected enrollment from 1 to
+50. Exactly 50 is valid; 51 or more blocks snapshot creation. The same maximum
+applies in classrooms, laboratories, and special rooms. It is a fixed academic
+scheduling rule, not a claim about chair count, floor area, or variable physical
+capacity. Participating rooms are administratively prevalidated for the
+baseline. Room utilization still means room-time, not seats.
 
 ### Why store students at all?
 
@@ -77,11 +87,22 @@ The system reports no solution or CP-SAT-proven infeasibility and identifies mee
 
 ### Why repeated runs if CP-SAT can be deterministic?
 
-GA is stochastic, and CP-SAT can react to a recorded search seed. Repeated runs measure reliability/distribution while one-worker execution reduces nondeterminism. Both engines use the same recorded seed set, but those numbers do not make their different random processes statistically paired. The protocol retains every timeout and records block order.
+GA is stochastic, and CP-SAT can react to a recorded search seed. Repeated runs measure reliability/distribution while one-worker execution reduces nondeterminism. The preregistration treats each scale-and-seed execution block as a pair for feasibility and RMST, without claiming identical random streams. Feasible-only quality uses the declared label-permutation comparison. Every eligible timeout remains recorded.
 
 ### Why not compare only execution time?
 
-A fast invalid timetable has no operational value. The preregistered hierarchy is feasibility, quality, time, then supporting consistency/retry/utilization measures. Failures are censored at the deadline rather than discarded from time analysis.
+A fast invalid timetable has no operational value. The three primary outcomes
+are feasible-generation rate, feasible raw penalty, and censor-aware time to
+feasibility. Consistency, retries, execution time, and room-time utilization are
+supporting evidence. Failures are censored at the deadline rather than discarded
+from time analysis.
+
+### Can an exploratory experiment declare the winner?
+
+No. Exploratory batches support development, tuning, and diagnostics. A winner
+can be considered only after the complete formal 25%, 50%, 75%, and 100% study
+passes its frozen protocol and provenance gates. Otherwise the system reports
+“No formal conclusion available.”
 
 ### How is quality calculated without bias?
 
@@ -116,7 +137,7 @@ Python supports OR-Tools and a transparent custom GA, while Django provides matu
 | Aggregate section assumption | document it; optional pseudonymous memberships; no claim about individual elective conflicts |
 | University-wide label versus partial data | state actual colleges/term coverage; system-ready scope is not evaluation coverage |
 | Utilization may be constant | treat as descriptive, retain balance/gap quality measures |
-| No capacity or walking distance | explicit approved boundary and future work, not a hidden omission |
+| No variable physical-capacity or walking-distance model | enforce the approved fixed 50-student rule, prevalidate rooms administratively, and disclose the boundary |
 
 ## Defense demonstration plan
 

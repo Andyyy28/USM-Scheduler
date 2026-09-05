@@ -11,7 +11,7 @@ click-plugins==1.1.1.2
 click-repl==0.3.0
 colorama==0.4.6
 Django==5.2.17
-djangorestframework==3.16.1
+djangorestframework==3.17.2
 et_xmlfile==2.0.0
 gunicorn==23.0.0
 immutabledict==4.3.1
@@ -30,7 +30,7 @@ pytz==2024.1
 redis==6.4.0
 scipy==1.18.1
 six==1.16.0
-sqlparse==0.5.1
+sqlparse==0.6.0
 typing_extensions==4.15.0
 tzdata==2026.3
 tzlocal==5.4.3
