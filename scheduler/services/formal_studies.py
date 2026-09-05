@@ -2046,7 +2046,7 @@ def classify_run_failure(
 
     _require_central_actor(actor)
     locked = (
-        models.ScheduleRun.objects.select_for_update()
+        models.ScheduleRun.objects.select_for_update(of=("self",))
         .select_related("experiment_batch__study")
         .get(pk=run.pk)
     )
@@ -2133,7 +2133,7 @@ def create_paired_infrastructure_replacement(
 
     _require_central_actor(actor)
     failed = (
-        models.ScheduleRun.objects.select_for_update()
+        models.ScheduleRun.objects.select_for_update(of=("self",))
         .select_related("experiment_batch__study", "snapshot")
         .get(pk=failed_run.pk)
     )

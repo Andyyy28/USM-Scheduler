@@ -28,7 +28,7 @@ def _model(name: str) -> Any | None:
 def _safe_list(
     model_name: str,
     *,
-    limit: int = 100,
+    limit: int | None = 100,
     filters: Mapping[str, Any] | None = None,
 ) -> list[Any]:
     model = _model(model_name)
@@ -36,6 +36,16 @@ def _safe_list(
         return []
     try:
         queryset = model.objects.all()
+        if model_name == "ScheduleRun":
+            queryset = queryset.select_related("snapshot__revision__term", "schedule_version")
+        if model_name == "ScheduleAssignment":
+            queryset = queryset.select_related(
+                "meeting_requirement__offering__subject", "room", "start_time_slot",
+                "meeting_requirement__offering__offering_department__college",
+            ).prefetch_related(
+                "meeting_requirement__offering__section_links__section",
+                "meeting_requirement__offering__instructor_links__instructor",
+            )
         if filters:
             queryset = queryset.filter(**filters)
         return list(queryset.order_by("-pk")[:limit])
@@ -643,6 +653,7 @@ def _diagnostic_summary(study: Any) -> SimpleNamespace:
 
 def _run_view(run: Any) -> SimpleNamespace:
     status = _display(run, "status", default="Unknown")
+    status_value = str(_first(run, "status", default=status))
     algorithm = _display(run, "algorithm", default="Unspecified")
     runtime = _run_metric(run, "execution_seconds", "runtime_seconds", "execution_time_seconds")
     first_feasible = _run_metric(run, "first_feasible_seconds", "time_to_first_feasible")
@@ -651,7 +662,7 @@ def _run_view(run: Any) -> SimpleNamespace:
         id=str(_first(run, "pk", "id", default="")),
         algorithm=algorithm,
         status=status,
-        status_class=_status_class(status),
+        status_class="error" if status_value == "FAILED" else slugify(status_value.replace("_", "-")),
         term=str(
             _first(
                 run,
@@ -706,7 +717,8 @@ def _schedule_view(schedule: Any) -> SimpleNamespace:
         algorithm=_display(run, "algorithm", default="Manual") if run else "Manual",
         created_at=_first(schedule, "created_at"),
         assignment_count=_related_count(schedule, "assignments", "schedule_assignments"),
-        approved=bool(_first(schedule, "approval", "approved_at", default=False)),
+        approved=status_value == "APPROVED",
+        can_lock=status_value in {"UNDER_REVIEW", "APPROVED"},
         snapshot_id=str(_first(schedule, "snapshot_id", default="")),
     )
 
@@ -800,6 +812,8 @@ def _through_text(
 
 
 def _assignment_is_locked(assignment: Any) -> bool:
+    if hasattr(assignment, "resolved_locked"):
+        return assignment.resolved_locked
     lock_model = _model("LockedAssignment")
     if lock_model is None:
         return False
@@ -823,7 +837,9 @@ def _assignment_view(assignment: Any) -> SimpleNamespace:
     room = _first(assignment, "room")
     end_time = _first(slot, "ends_at", "end_time")
     allocations = getattr(assignment, "room_allocations", None)
-    if allocations is not None:
+    if hasattr(assignment, "resolved_end_time"):
+        end_time = assignment.resolved_end_time
+    elif allocations is not None:
         try:
             last_allocation = allocations.select_related("time_slot").order_by(
                 "-time_slot__day", "-time_slot__sequence"
@@ -1033,7 +1049,6 @@ def terms(request: HttpRequest) -> HttpResponse:
 @login_required
 @require_GET
 def runs(request: HttpRequest) -> HttpResponse:
-    rows = [_run_view(run) for run in _safe_list("ScheduleRun", limit=250)]
     snapshots = [_snapshot_view(item) for item in _safe_list("ProblemSnapshot", limit=100)]
     revision_model = _model("TermDatasetRevision")
     revisions = [] if revision_model is None else [
@@ -1048,10 +1063,17 @@ def runs(request: HttpRequest) -> HttpResponse:
     objectives = _safe_list("ObjectiveProfile", limit=100, filters={"is_approved": True})
     algorithm = request.GET.get("algorithm", "").strip().lower()
     status = request.GET.get("status", "").strip().lower()
-    if algorithm:
-        rows = [row for row in rows if slugify(row.algorithm) == slugify(algorithm)]
-    if status:
-        rows = [row for row in rows if slugify(row.status) == slugify(status)]
+    run_model = _model("ScheduleRun")
+    filters = {}
+    for parameter, value in (("algorithm", algorithm), ("status", status)):
+        if value and run_model is not None:
+            choices = run_model._meta.get_field(parameter).choices
+            aliases = {slugify(str(alias).replace("_", "-")): key
+                       for key, label in choices for alias in (key, label)}
+            if parameter == "status":
+                aliases["error"] = "FAILED"
+            filters[parameter] = aliases.get(slugify(value.replace("_", "-")), "__unknown__")
+    rows = [_run_view(run) for run in _safe_list("ScheduleRun", limit=250, filters=filters)]
     return _render(
         request,
         "scheduler/runs.html",
@@ -1130,6 +1152,7 @@ def run_comparison(request: HttpRequest) -> HttpResponse:
     comparable = bool(
         left
         and right
+        and left.id != right.id
         and (
             (left.problem_hash and left.problem_hash == right.problem_hash)
             or (left.snapshot_id and left.snapshot_id == right.snapshot_id)
@@ -1146,6 +1169,7 @@ def run_comparison(request: HttpRequest) -> HttpResponse:
         left_id=left_id,
         right_id=right_id,
         comparable=comparable,
+        same_run_selected=bool(left_id and left_id == right_id),
     )
 
 
@@ -1265,10 +1289,12 @@ def schedules(request: HttpRequest) -> HttpResponse:
         selected_id = schedule_rows[0].id
     selected_model = _safe_get("ScheduleVersion", selected_id)
     selected = _schedule_view(selected_model) if selected_model is not None else None
-    assignments = [
-        _assignment_view(item)
-        for item in _safe_list("ScheduleAssignment", limit=2000, filters={"schedule_id": selected_id})
-    ]
+    assignment_models = _safe_list("ScheduleAssignment", limit=None, filters={"schedule_id": selected_id})
+    if selected_model is not None and hasattr(selected_model, "snapshot_id"):
+        from scheduler.services.assignment_display import prepare_assignments
+
+        prepare_assignments(selected_model, assignment_models)
+    assignments = [_assignment_view(item) for item in assignment_models]
     day_labels = (
         "Monday",
         "Tuesday",

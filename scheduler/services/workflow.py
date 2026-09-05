@@ -133,6 +133,7 @@ def review_schedule(
     status: str,
     comment: str,
 ) -> models.ScheduleReview:
+    schedule = models.ScheduleVersion.objects.select_for_update().get(pk=schedule.pk)
     if schedule.status != models.ScheduleStatus.UNDER_REVIEW:
         raise ValidationError("Reviews are accepted only while the schedule is under review.")
     if not reviewer.is_active:

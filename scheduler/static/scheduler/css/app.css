@@ -1232,6 +1232,7 @@ tbody tr:hover {
 .status--no-solution,
 .status--no-feasible-solution-found,
 .status--timed-out,
+.status--timeout,
 .status--warning,
 .status--changes-requested,
 .status--unknown {

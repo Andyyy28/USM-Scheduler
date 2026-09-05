@@ -1,5 +1,8 @@
 # USM Scheduler thesis validation report
 
+> Historical validation record. See the [September 5 reliability audit](audit-2026-09-05.md)
+> for the current fixes, dependency audit, GA-v6 evidence, and release checks.
+
 ## Release candidate
 
 - Branch: `thesis/experimental-platform-v2`

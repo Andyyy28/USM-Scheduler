@@ -29,7 +29,7 @@ from scheduler.solvers.tracing import IncumbentTrace
 
 Chromosome = tuple[int, ...]
 Fitness = tuple[int, int]
-GA_IMPLEMENTATION_VERSION = "ga-v5"
+GA_IMPLEMENTATION_VERSION = "ga-v6"
 _CACHE_GENE_BUDGET = 5_000_000
 _MIN_CACHE_ENTRIES = 100
 _MAX_CACHE_ENTRIES = 100_000
@@ -315,6 +315,7 @@ class GeneticAlgorithmSolver:
                     rng,
                     deadline,
                     search_diagnostics,
+                    problem.objective_profile.preference_weight,
                 )
                 if config.diagnostic_trace:
                     timings["repair_seconds"] += perf_counter() - phase_at
@@ -342,6 +343,7 @@ class GeneticAlgorithmSolver:
                     improve_feasible(
                         events, timely_best.chromosome, timely_best.fitness,
                         locked_genes, evaluate, rng, deadline, search_diagnostics, monotonic,
+                        problem.objective_profile.preference_weight,
                     )
                     if config.diagnostic_trace:
                         timings["feasible_improvement_seconds"] += perf_counter() - phase_at
@@ -665,10 +667,10 @@ def _mutate(
 def _repair(
     events: tuple[MeetingEvent, ...], chromosome: Chromosome, locked_genes: dict[int, int],
     attempts: int, evaluate: Callable[[Chromosome], _Evaluation], rng: Random,
-    deadline: float, diagnostics: dict[str, int] | None = None,
+    deadline: float, diagnostics: dict[str, int] | None = None, preference_weight: int = 1,
 ) -> Chromosome:
     return bounded_repair(events, chromosome, locked_genes, attempts, evaluate, rng,
-                          deadline, diagnostics if diagnostics is not None else {}, monotonic)
+                          deadline, diagnostics if diagnostics is not None else {}, monotonic, preference_weight)
 
 
 def _cache_capacity(gene_count: int) -> int:

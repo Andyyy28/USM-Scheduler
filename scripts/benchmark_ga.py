@@ -226,16 +226,35 @@ def build_scenarios(*, include_holdouts: bool = False) -> tuple[Scenario, ...]:
     return tuple(scenarios)
 
 
-def _load_solver(source: Path) -> ModuleType:
-    """Load an explicit source snapshot without replacing the application's solver."""
-    name = "_ga_diagnostic_" + hashlib.sha256(source.read_bytes()).hexdigest()
+def _load_module(source: Path, name: str) -> ModuleType:
     spec = importlib.util.spec_from_file_location(name, source)
     if spec is None or spec.loader is None:
         raise ValueError(f"Cannot load Python solver source: {source}")
     module = importlib.util.module_from_spec(spec)
-    sys.modules[name] = module  # dataclasses resolves annotations through this registry
+    sys.modules[name] = module
     spec.loader.exec_module(module)
     return module
+
+
+def solver_support(source: Path) -> Path:
+    sibling = source.parent / "neighborhood.py"
+    return sibling if sibling.exists() else ROOT / "scheduler/solvers/neighborhood.py"
+
+
+def _load_solver(source: Path) -> ModuleType:
+    """Bind the archived neighborhood to this entrypoint, restoring the live import."""
+    support = solver_support(source)
+    key = hashlib.sha256(source.read_bytes() + support.read_bytes()).hexdigest()
+    name = "scheduler.solvers.neighborhood"
+    previous = sys.modules.get(name)
+    try:
+        sys.modules[name] = _load_module(support, "_ga_neighborhood_" + key)
+        return _load_module(source, "_ga_diagnostic_" + key)
+    finally:
+        if previous is None:
+            sys.modules.pop(name, None)
+        else:
+            sys.modules[name] = previous
 
 
 def _write_json(path: Path, value: object) -> None:
@@ -265,10 +284,12 @@ def run_benchmark(
     output.parent.mkdir(parents=True, exist_ok=True)
     artifacts.mkdir(parents=True, exist_ok=True)
     (artifacts / "genetic.py").write_bytes(source_bytes)
+    support_bytes = solver_support(source).read_bytes()
+    (artifacts / "neighborhood.py").write_bytes(support_bytes)
     source_files = (
         "scheduler/domain/contracts.py", "scheduler/domain/validation.py",
         "scheduler/domain/scoring.py", "scheduler/domain/hashing.py", "scheduler/solvers/tracing.py",
-        "scheduler/domain/prepared.py", "scheduler/solvers/neighborhood.py",
+        "scheduler/domain/prepared.py",
     )
     report = {
         "benchmark_version": BENCHMARK_VERSION,
@@ -281,6 +302,7 @@ def run_benchmark(
         "solver_source": str(source),
         "solver_source_sha256": hashlib.sha256(source_bytes).hexdigest(),
         "solver_source_snapshot": str(artifacts / "genetic.py"),
+        "solver_support_sha256": {"neighborhood.py": hashlib.sha256(support_bytes).hexdigest()},
         "supporting_source_sha256": {
             name: hashlib.sha256((ROOT / name).read_bytes()).hexdigest() for name in source_files
         },

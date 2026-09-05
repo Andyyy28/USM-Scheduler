@@ -49,14 +49,19 @@ incumbent remains an unsuccessful algorithm observation, right-censored at the
 deadline; the 60-second infrastructure grace period cannot improve its schedule.
 Post-run validation and persistence are recorded separately. CP-SAT optimality
 or infeasibility proofs obtained after the deadline do not become in-budget proof
-claims. Implementation versions `cp-sat-v3` and `ga-v5` enforce this boundary.
+claims. Implementation versions `cp-sat-v4` and `ga-v6` enforce this boundary.
 The GA also interrupts unfinished greedy construction and discards partial
 chromosomes. Candidate-list allocation/shuffling and final result serialization
 can still add overhead; the incumbent acceptance deadline remains strict.
-The GA-v5 prepared lookup context is built within that budget, and prospective
+The GA prepared lookup context is built within that budget, and prospective
 incumbents are independently rechecked without it before acceptance. Its fixed
 128-request repair cap and 64-trial feasible improvement pass do not introduce
 new formal pilot configurations or change the 300-second study deadline.
+GA-v6 makes neighborhood ranking lazy and deadline-aware and keeps zero-weight
+faculty preferences inactive throughout repair and improvement. CP-SAT-v4 fixes
+legacy schema daily-load handling and classifies independent-incumbent rejection
+as an implementation error. Rerun both equal-budget pilots for the new build;
+historical frozen profiles do not validate changed implementations.
 
 Excluded seed-9001 diagnostics alone enable convergence logging. They record
 improving incumbents, at most 512 points per run with deterministic thinning,

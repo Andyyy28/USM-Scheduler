@@ -13,6 +13,7 @@ from openpyxl.styles import Font, PatternFill
 from openpyxl.utils import get_column_letter
 
 from scheduler import models
+from scheduler.services.assignment_display import prepare_assignments
 
 SCHEDULE_COLUMNS = (
     "meeting_id",
@@ -47,7 +48,7 @@ def _schedule_queryset(schedule: models.ScheduleVersion):
 def schedule_export_rows(schedule: models.ScheduleVersion) -> list[dict[str, Any]]:
     """Return stable section-level rows without student-identifying data."""
 
-    assignments = list(_schedule_queryset(schedule))
+    assignments = prepare_assignments(schedule, list(_schedule_queryset(schedule)))
     meeting_ids = [row.meeting_requirement_id for row in assignments]
     locked_meetings = set(
         models.LockedAssignment.objects.filter(
@@ -71,7 +72,9 @@ def schedule_export_rows(schedule: models.ScheduleVersion) -> list[dict[str, Any
             (allocation.time_slot for allocation in assignment.room_allocations.all()),
             key=lambda slot: (slot.day, slot.sequence),
         )
-        end_time = occupied[-1].ends_at if occupied else assignment.start_time_slot.ends_at
+        end_time = getattr(assignment, "resolved_end_time", None)
+        if not schedule.snapshot_id:
+            end_time = occupied[-1].ends_at if occupied else assignment.start_time_slot.ends_at
         rows.append(
             {
                 "meeting_id": str(meeting.stable_key),
@@ -83,13 +86,13 @@ def schedule_export_rows(schedule: models.ScheduleVersion) -> list[dict[str, Any
                 "instructors": "; ".join(instructors),
                 "day": assignment.start_time_slot.get_day_display(),
                 "starts_at": assignment.start_time_slot.starts_at.strftime("%H:%M"),
-                "ends_at": end_time.strftime("%H:%M"),
+                "ends_at": end_time.strftime("%H:%M") if end_time else "Unresolved placement",
                 "room_code": assignment.room.code,
                 "offering_unit": (
                     f"{offering.offering_department.college.code} / "
                     f"{offering.offering_department.code}"
                 ),
-                "locked": "YES" if meeting.pk in locked_meetings else "NO",
+                "locked": "YES" if getattr(assignment, "resolved_locked", meeting.pk in locked_meetings) else "NO",
             }
         )
     return sorted(

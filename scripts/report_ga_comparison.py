@@ -25,7 +25,7 @@ from scheduler.domain import (  # noqa: E402
 )
 
 
-def summarize(directories: list[Path]) -> dict:
+def summarize(directories: list[Path], *, baseline: str = "ga-v4") -> dict:
     observations = []
     seen = set()
     identities = {}
@@ -66,7 +66,11 @@ def summarize(directories: list[Path]) -> dict:
             source = Path(report["solver_source_snapshot"])
             if hashlib.sha256(source.read_bytes()).hexdigest() != report["solver_source_sha256"]:
                 raise ValueError("Changed archived solver source")
-            identity = (report["solver_source_sha256"], report["harness_sha256"], report["environment"]["python"], report["environment"]["platform"])
+            solver_support = report.get("solver_support_sha256", {})
+            for support, digest in solver_support.items():
+                if support != "neighborhood.py" or hashlib.sha256((source.parent / support).read_bytes()).hexdigest() != digest:
+                    raise ValueError("Changed archived solver support")
+            identity = (report["solver_source_sha256"], report["harness_sha256"], report["environment"]["python"], report["environment"]["platform"], tuple(sorted(solver_support.items())))
             if label in identities and identities[label] != identity:
                 raise ValueError(f"Mixed implementation/environment identity for {label}")
             identities[label] = identity
@@ -112,6 +116,9 @@ def summarize(directories: list[Path]) -> dict:
                         "report": path.relative_to(ROOT).as_posix() if path.is_relative_to(ROOT) else str(path),
                         "report_sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
                     })
+    environments = {(identity[1], identity[2], identity[3]) for identity in identities.values()}
+    if len(environments) > 1:
+        raise ValueError("Mixed comparison harness/environment identity")
     # Every comparison cell must describe the same input and configuration.
     matches = {}
     for row in observations:
@@ -134,10 +141,10 @@ def summarize(directories: list[Path]) -> dict:
             "median_final_hard_violations": median(row["hard_violations"] for row in rows),
         })
     baselines = {(row["scenario"], row["seconds"], row["seed"]): row
-                 for row in observations if row["variant"] == "ga-v4"}
+                 for row in observations if row["variant"] == baseline}
     paired_comparisons = []
     for (variant, case, seconds), rows in sorted(groups.items()):
-        if variant == "ga-v4":
+        if variant == baseline:
             continue
         pairs = [(baselines[(case, seconds, row["seed"])], row) for row in rows
                  if (case, seconds, row["seed"]) in baselines]
@@ -146,7 +153,7 @@ def summarize(directories: list[Path]) -> dict:
         both_feasible = [(before, after) for before, after in pairs if before["feasible"] and after["feasible"]]
         penalty_deltas = [after["raw_penalty"] - before["raw_penalty"] for before, after in both_feasible]
         paired_comparisons.append({
-            "baseline": "ga-v4", "candidate": variant, "scenario": case, "seconds": seconds,
+            "baseline": baseline, "candidate": variant, "scenario": case, "seconds": seconds,
             "matched_runs": len(pairs), "both_feasible": len(both_feasible),
             "gained_feasibility": sum(not before["feasible"] and after["feasible"] for before, after in pairs),
             "lost_feasibility": sum(before["feasible"] and not after["feasible"] for before, after in pairs),
@@ -161,7 +168,7 @@ def summarize(directories: list[Path]) -> dict:
         "primary_development_budget_seconds": 30,
         "observation_count": len(observations),
         "supporting_source_sha256": supporting_sources,
-        "identities": {label: {"source_sha256": value[0], "harness_sha256": value[1], "python": value[2], "platform": value[3]} for label, value in identities.items()},
+        "identities": {label: {"source_sha256": value[0], "harness_sha256": value[1], "python": value[2], "platform": value[3], "solver_support_sha256": dict(value[4])} for label, value in identities.items()},
         "summaries": summaries, "observations": observations, "paired_comparisons": paired_comparisons,
         "failed_observations": [
             {key: row[key] for key in ("variant", "scenario", "seconds", "seed", "hard_violations", "raw_penalty", "report")}
@@ -181,8 +188,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("directories", type=Path, nargs="+")
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--baseline", default="ga-v4")
     args = parser.parse_args()
-    result = summarize(args.directories)
+    result = summarize(args.directories, baseline=args.baseline)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print(json.dumps(result["summaries"], indent=2))

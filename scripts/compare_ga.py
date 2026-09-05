@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from scripts.benchmark_ga import HOLDOUT_IDS, SCENARIO_IDS, run_benchmark  # noqa: E402
+from scripts.benchmark_ga import HOLDOUT_IDS, SCENARIO_IDS, run_benchmark, solver_support  # noqa: E402
 
 
 def compare(output: Path, sources: dict[str, Path], budgets: list[float], seeds: list[int], cases: list[str]):
@@ -40,6 +40,7 @@ def compare(output: Path, sources: dict[str, Path], budgets: list[float], seeds:
                 for label in labels:
                     source = sources[label].resolve()
                     source_hash = hashlib.sha256(source.read_bytes()).hexdigest()
+                    support_hash = hashlib.sha256(solver_support(source).read_bytes()).hexdigest()
                     path = output / f"{label}-{seconds:g}s-{seed}-{case}.json"
                     existing = json.loads(path.read_text(encoding="utf-8")) if path.exists() else None
                     if existing is not None:
@@ -48,7 +49,8 @@ def compare(output: Path, sources: dict[str, Path], budgets: list[float], seeds:
                             for name, digest in existing["supporting_source_sha256"].items()
                         )
                         if not (existing["solver_source_sha256"] == source_hash
-                                and existing["harness_sha256"] == harness_hash and support_matches):
+                                and existing["harness_sha256"] == harness_hash and support_matches
+                                and existing.get("solver_support_sha256", {}).get("neighborhood.py") == support_hash):
                             raise ValueError(f"Source mismatch in {path}; use a new output directory")
                         if not (existing["environment"]["python"] == sys.version
                                 and existing["environment"]["platform"] == platform.platform()

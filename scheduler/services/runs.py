@@ -496,7 +496,7 @@ def _mark_started(
     """Atomically acquire a time-bounded lease for one queued run."""
 
     run = (
-        models.ScheduleRun.objects.select_for_update()
+        models.ScheduleRun.objects.select_for_update(of=("self",))
         .select_related("snapshot", "experiment_batch")
         .get(pk=run_id)
     )
@@ -520,7 +520,7 @@ def _mark_started(
         # The parent-row lock serializes order assignment even if deployment is
         # accidentally configured with more than one consumer.
         batch = (
-            models.ExperimentBatch.objects.select_for_update()
+            models.ExperimentBatch.objects.select_for_update(of=("self",))
             .select_related("study")
             .get(pk=run.experiment_batch_id)
         )
@@ -851,7 +851,7 @@ def persist_result(
     task_started_at: float | None = None,
 ) -> models.ScheduleRun:
     run = (
-        models.ScheduleRun.objects.select_for_update()
+        models.ScheduleRun.objects.select_for_update(of=("self",))
         .select_related("snapshot__revision__term", "requested_by")
         .get(pk=run_id)
     )

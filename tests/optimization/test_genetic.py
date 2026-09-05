@@ -127,7 +127,7 @@ def test_ga_default_mutation_uses_only_mutable_events_and_caps_at_one(
 
     assert metrics["mutable_event_count"] == 1
     assert metrics["mutation_rate"] == 1.0
-    assert metrics["implementation_version"] == "ga-v5"
+    assert metrics["implementation_version"] == "ga-v6"
 
 
 def test_ga_does_not_evaluate_when_construction_starts_after_deadline(

@@ -437,7 +437,7 @@ class LockedAssignmentAdmin(admin.ModelAdmin):
 
 
 @admin.register(models.ScheduleReview)
-class ScheduleReviewAdmin(admin.ModelAdmin):
+class ScheduleReviewAdmin(ReadOnlyArtifactAdmin):
     list_display = ("schedule", "college", "reviewer", "status", "is_resolved", "created_at")
     list_filter = ("college", "status", "is_resolved")
     search_fields = ("schedule__name", "reviewer__username", "comment")

@@ -40,7 +40,7 @@ def test_cp_sat_finds_and_proves_known_zero_penalty_optimum(
     assert result.problem_hash == balanced_problem.canonical_hash
     metrics = dict(result.metrics)
     assert metrics["objective_value"] == 0
-    assert metrics["implementation_version"] == "cp-sat-v3"
+    assert metrics["implementation_version"] == "cp-sat-v4"
     assert metrics["model_variable_count"] > 0
     assert metrics["model_constraint_count"] > 0
 

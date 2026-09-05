@@ -20,7 +20,8 @@ class Evaluation(Protocol):
 class PlacementGuide:
     """Cheap placement ordering only; the shared evaluator decides feasibility."""
 
-    def __init__(self, events: tuple[MeetingEvent, ...], chromosome: Chromosome):
+    def __init__(self, events: tuple[MeetingEvent, ...], chromosome: Chromosome, preference_weight: int = 1):
+        self.preference_weight = preference_weight
         self.events = events
         self.occupancy: dict[tuple[str, str, str], set[int]] = defaultdict(set)
         self.groups: dict[tuple[str, str], set[int]] = defaultdict(set)
@@ -49,12 +50,30 @@ class PlacementGuide:
         result.discard(index)
         return result
 
-    def alternatives(self, index: int, current: int, rng: Random) -> list[int]:
+    def alternatives(
+        self, index: int, current: int, rng: Random,
+        clock: Callable[[], float] | None = None, deadline: float = float("inf"),
+    ) -> list[int]:
         candidates = self.events[index].candidates
         order = [gene for gene in range(len(candidates)) if gene != current]
         rng.shuffle(order)
-        order.sort(key=lambda gene: (len(self.blockers(index, candidates[gene])), candidates[gene].preference_penalty))
-        return order
+        ranked = []
+        for gene in order:
+            if clock is not None and clock() >= deadline:
+                return []
+            candidate = candidates[gene]
+            ranked.append((len(self.blockers(index, candidate)),
+                           self.preference_weight * candidate.preference_penalty, gene))
+        # Stable ties retain the seeded shuffled order, not the candidate index.
+        ranked.sort(key=lambda item: item[:2])
+        return [item[2] for item in ranked]
+
+    def moves(self, index: int, current: int, rng: Random,
+              clock: Callable[[], float], deadline: float) -> Iterator[tuple[int, int]]:
+        # Generator body runs only when this event's stream is actually consumed.
+        for gene in self.alternatives(index, current, rng, clock, deadline):
+            yield index, gene
+
 
 
 def _round_robin(streams: list[Iterator]) -> Iterator:
@@ -72,6 +91,7 @@ def repair(
     events: tuple[MeetingEvent, ...], chromosome: Chromosome, locked: dict[int, int],
     attempts: int, evaluate: Callable[[Chromosome], Evaluation], rng: Random,
     deadline: float, diagnostics: dict[str, int], clock: Callable[[], float],
+    preference_weight: int = 1,
 ) -> Chromosome:
     def inc(key: str, amount: int = 1) -> None:
         diagnostics[key] = diagnostics.get(key, 0) + amount
@@ -110,11 +130,11 @@ def repair(
                           key=lambda index: (len(events[index].candidates), index))
         if not involved:
             break
-        guide = PlacementGuide(events, current)
+        guide = PlacementGuide(events, current, preference_weight)
         best, best_eval = current, evaluation
         bridges: list[tuple[int, Chromosome, Evaluation]] = []
-        # Materialize index/gene pairs so each stream keeps its own event index.
-        streams = [iter([(index, gene) for gene in guide.alternatives(index, current[index], rng)])
+        # Bind each event index in a lazy stream; unused domains are never ranked.
+        streams = [guide.moves(index, current[index], rng, clock, deadline)
                    for index in involved]
         for index, gene in _round_robin(streams):
             if clock() >= deadline:
@@ -141,7 +161,7 @@ def repair(
                 break
 
         def second_moves(changed: int, bridge: Chromosome, observed: Evaluation) -> Iterator[Chromosome]:
-            bridge_guide = PlacementGuide(events, bridge)
+            bridge_guide = PlacementGuide(events, bridge, preference_weight)
             blockers = bridge_guide.blockers(changed, events[changed].candidates[bridge[changed]])
             # Raw validation groups include non-overlapping daily-load conflicts.
             for left, right in getattr(observed, "conflict_pairs", ()):
@@ -152,7 +172,7 @@ def repair(
             partners = list(set(observed.conflict_event_indexes) - locked.keys() - {changed})
             rng.shuffle(partners)
             partners.sort(key=lambda index: index not in blockers)
-            streams = [iter([(index, gene) for gene in bridge_guide.alternatives(index, bridge[index], rng)])
+            streams = [bridge_guide.moves(index, bridge[index], rng, clock, deadline)
                        for index in partners]
             for index, gene in _round_robin(streams):
                 proposal = list(bridge)
@@ -191,6 +211,7 @@ def improve_feasible(
     events: tuple[MeetingEvent, ...], chromosome: Chromosome, fitness: tuple[int, int],
     locked: dict[int, int], evaluate: Callable[[Chromosome], Evaluation], rng: Random,
     deadline: float, diagnostics: dict[str, int], clock: Callable[[], float],
+    preference_weight: int = 1,
 ) -> Chromosome:
     """Up to 64 complete single/swap trials; only feasible strict gains survive."""
     def inc(key: str) -> None:
@@ -202,8 +223,8 @@ def improve_feasible(
     current, best_fitness = chromosome, fitness
     mutable = [index for index in range(len(events)) if index not in locked]
     rng.shuffle(mutable)
-    guide = PlacementGuide(events, current)
-    streams = [iter([(index, gene) for gene in guide.alternatives(index, current[index], rng)])
+    guide = PlacementGuide(events, current, preference_weight)
+    streams = [guide.moves(index, current[index], rng, clock, deadline)
                for index in mutable]
     requests = 0
 
@@ -214,7 +235,7 @@ def improve_feasible(
         observed = evaluate(proposal)
         if clock() < deadline and observed.fitness[0] == 0 and observed.fitness < best_fitness:
             current, best_fitness = proposal, observed.fitness
-            guide = PlacementGuide(events, current)
+            guide = PlacementGuide(events, current, preference_weight)
             inc("feasible_improvements")
 
     for index, gene in _round_robin(streams):
@@ -242,7 +263,7 @@ def improve_feasible(
             if not alternatives:
                 continue
             swap = list(proposal)
-            swap[partner] = min(alternatives, key=lambda other: events[partner].candidates[other].preference_penalty)
+            swap[partner] = min(alternatives, key=lambda other: preference_weight * events[partner].candidates[other].preference_penalty)
             consider(tuple(swap))
     diagnostics["feasible_improvement_max_requests"] = max(
         diagnostics.get("feasible_improvement_max_requests", 0), requests

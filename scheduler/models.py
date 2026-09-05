@@ -9,7 +9,7 @@ from django.conf import settings
 from django.contrib.auth.models import AbstractUser
 from django.core.exceptions import ValidationError
 from django.core.validators import MaxValueValidator, MinValueValidator, RegexValidator
-from django.db import models
+from django.db import models, transaction
 from django.db.models import F, Q
 from django.utils import timezone
 
@@ -2476,13 +2476,27 @@ class ScheduleAssignment(TimestampedModel):
         if errors:
             raise ValidationError(errors)
 
+    def _lock_editable_schedules(self) -> None:
+        schedule_ids = {self.schedule_id} if self.schedule_id else set()
+        if self.pk:
+            previous_id = type(self).objects.filter(pk=self.pk).values_list("schedule_id", flat=True).first()
+            if previous_id:
+                schedule_ids.add(previous_id)
+        for parent in ScheduleVersion.objects.select_for_update().filter(pk__in=schedule_ids).order_by("pk"):
+            if parent.assignments_are_immutable:
+                raise ValidationError("Assignments can be changed only while a schedule is in DRAFT status.")
+            if parent.pk == self.schedule_id:
+                self.schedule = parent
+
+    @transaction.atomic
     def save(self, *args: Any, **kwargs: Any) -> None:
+        self._lock_editable_schedules()
         self.clean()
         super().save(*args, **kwargs)
 
+    @transaction.atomic
     def delete(self, *args: Any, **kwargs: Any) -> tuple[int, dict[str, int]]:
-        if self.schedule.assignments_are_immutable:
-            raise ValidationError("Assignments can be deleted only while a schedule is in DRAFT status.")
+        self._lock_editable_schedules()
         return super().delete(*args, **kwargs)
 
     def __str__(self) -> str:
@@ -2672,13 +2686,6 @@ class ScheduleReview(TimestampedModel):
 
     class Meta:
         ordering = ["schedule", "college", "created_at"]
-        constraints = [
-            models.UniqueConstraint(
-                fields=["schedule", "college"],
-                condition=Q(status=ReviewStatus.ENDORSED),
-                name="uniq_schedule_college_endorsement",
-            ),
-        ]
         indexes = [models.Index(fields=["schedule", "college", "status"])]
 
     def clean(self) -> None:

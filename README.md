@@ -335,6 +335,14 @@ tests/          model, service, statistical, and solver verification
 - [Thesis validation report](docs/thesis-validation-report.md)
 - [Usability validation kit](docs/usability-test-kit.md)
 
+## Latest reliability audit
+
+The [September 5 audit](docs/audit-2026-09-05.md) covers review history, PostgreSQL
+locking, timetable accuracy, dependency security, and GA-v6 development validation.
+The current solver identifiers are GA-v6 and CP-SAT-v4; earlier tuning reports
+remain historical. Rerun the registered equal-budget pilot before freezing profiles
+for the new build.
+
 ## Research and operational limits
 
 - Conclusions apply to the authorized USM terms and instance sizes actually evaluated; “university-wide” describes the system boundary, not automatic statistical generalization to every university.

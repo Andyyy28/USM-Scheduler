@@ -30,6 +30,8 @@ def saved_comparison(tmp_path, monkeypatch, balanced_problem):
     harness.write_text("# trusted test harness\n", encoding="utf-8")
     source = tmp_path / "genetic.py"
     source.write_text("# trusted test solver\n", encoding="utf-8")
+    support = tmp_path / "neighborhood.py"
+    support.write_text("# trusted neighborhood\n", encoding="utf-8")
     config = SolverConfig(algorithm=SolverAlgorithm.GENETIC_ALGORITHM, seed=5001, time_limit_seconds=30)
     assignments = tuple(Assignment(event.event_id, event.candidates[0].candidate_id) for event in balanced_problem.events)
     validation = validate_schedule(balanced_problem, assignments)
@@ -45,6 +47,7 @@ def saved_comparison(tmp_path, monkeypatch, balanced_problem):
     witness_path.write_text(json.dumps([item.to_dict() for item in assignments]), encoding="utf-8")
     report = {
         "execution": {"profiled": False, "seeds": [5001], "cases": ["moderate_mixed"], "seconds_per_measured_run": 30},
+        "solver_support_sha256": {"neighborhood.py": hashlib.sha256(support.read_bytes()).hexdigest()},
         "supporting_source_sha256": {}, "harness_sha256": hashlib.sha256(harness.read_bytes()).hexdigest(),
         "solver_source_snapshot": str(source), "solver_source_sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
         "environment": {"python": sys.version, "platform": platform.platform()},
@@ -82,7 +85,7 @@ def test_report_accepts_relative_cli_paths(saved_comparison, monkeypatch):
     assert report_ga_comparison.summarize([Path("comparison")])["summaries"][0]["feasible_runs"] == 1
 
 
-@pytest.mark.parametrize("tamper", ["score", "seed", "deadline", "witness", "source", "incomplete", "missing_cell", "profile"])
+@pytest.mark.parametrize("tamper", ["score", "seed", "deadline", "witness", "source", "incomplete", "missing_cell", "profile", "support"])
 def test_report_refuses_inconsistent_or_incomplete_evidence(saved_comparison, tamper):
     directory, path, report = saved_comparison
     row = report["scenarios"][0]["runs"][0]
@@ -96,6 +99,8 @@ def test_report_refuses_inconsistent_or_incomplete_evidence(saved_comparison, ta
         Path(report["scenarios"][0]["witness_snapshot"]).write_text("[]", encoding="utf-8")
     elif tamper == "source":
         report["solver_source_sha256"] = "not-the-recorded-hash"
+    elif tamper == "support":
+        (Path(report["solver_source_snapshot"]).parent / "neighborhood.py").write_text("# changed support\n")
     elif tamper == "incomplete":
         report["scenarios"][0]["runs"] = []
     elif tamper == "missing_cell":

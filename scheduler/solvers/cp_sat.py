@@ -26,7 +26,7 @@ except ImportError as exc:  # pragma: no cover - environment dependent
 else:
     _ORTOOLS_IMPORT_ERROR = None
 
-CP_SAT_IMPLEMENTATION_VERSION = "cp-sat-v3"
+CP_SAT_IMPLEMENTATION_VERSION = "cp-sat-v4"
 
 
 class ORToolsUnavailableError(RuntimeError):
@@ -55,6 +55,7 @@ if cp_model is not None:
             self.accepted_objective: int | None = None
             self.best_bound: float | None = None
             self.first_feasible_seconds: float | None = None
+            self.rejection_reason: str | None = None
 
         def on_solution_callback(self) -> None:
             if monotonic() > self._deadline:
@@ -79,6 +80,13 @@ if cp_model is not None:
                 self.accepted_objective = objective.weighted_total
                 self.best_bound = self.BestObjectiveBound()
                 self.trace.observe(completed_at - self._started_at, (0, objective.weighted_total))
+            else:
+                self.rejection_reason = (
+                    "CP-SAT returned an assignment rejected by the independent validator."
+                    if not validation.feasible
+                    else "CP-SAT objective disagrees with independent rescoring."
+                )
+                self.StopSearch()
 
 
 class CpSatSolver:
@@ -178,6 +186,8 @@ class CpSatSolver:
         # Never use a later solver incumbent whose shared validation/scoring did
         # not complete before the deadline. Infrastructure grace is not search time.
         assignments = callback.assignments
+        if callback.rejection_reason:
+            status = SolverStatus.ERROR
         if status in (SolverStatus.OPTIMAL, SolverStatus.FEASIBLE):
             if not assignments:
                 status = SolverStatus.NO_SOLUTION
@@ -214,7 +224,7 @@ class CpSatSolver:
             stopping_reason = "CP-SAT proved the problem infeasible."
             best_bound = solver.BestObjectiveBound()
         elif status is SolverStatus.ERROR:
-            stopping_reason = "CP-SAT rejected the generated model as invalid."
+            stopping_reason = callback.rejection_reason or "CP-SAT rejected the generated model as invalid."
         else:
             stopping_reason = (
                 "Configured wall-clock time limit reached without a feasible incumbent or "
@@ -282,6 +292,8 @@ def _add_instructor_daily_load_constraints(
 ) -> None:
     """Apply the same frozen per-day teaching-atom policy checked by the validator."""
 
+    if not problem.supports_thesis_v2_rules:
+        return
     limits = {
         evidence.instructor_id: evidence.max_daily_teaching_atoms
         for evidence in problem.instructor_evidence

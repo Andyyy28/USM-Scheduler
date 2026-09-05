@@ -14,7 +14,7 @@
 
   {% if run.status_class == 'feasible' or run.status_class == 'optimal' %}<section class="callout callout--success"><div><strong>A valid timetable was generated.</strong><p>Open the timetable to check classes, rooms, instructors, and times before sending it for review.</p></div></section>
   {% elif run.status_class == 'queued' or run.status_class == 'running' %}<section class="callout callout--info"><div><strong>Generation is still in progress.</strong><p>You can return to the generated schedules page and check again later.</p></div></section>
-  {% elif run.status_class == 'infeasible' or run.status_class == 'no-solution' or run.status_class == 'error' %}<section class="callout callout--warning"><div><strong>No timetable was created.</strong><p>Check semester data, instructor and room availability, locked classes, and the stopping reason below. Existing timetables were not changed.</p></div></section>{% endif %}
+  {% elif run.status_class == 'infeasible' or run.status_class == 'no-solution' or run.status_class == 'error' or run.status_class == 'timeout' or run.status_class == 'cancelled' %}<section class="callout callout--warning"><div><strong>No timetable was created.</strong><p>Check semester data, instructor and room availability, locked classes, and the stopping reason below. Existing timetables were not changed.</p></div></section>{% endif %}
 
   <section class="metric-grid metric-grid--quiet" aria-label="Generation result summary">
     <article class="metric-card"><span>Run time</span><strong>{{ run.runtime }}</strong></article>
