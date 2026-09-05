@@ -339,7 +339,7 @@ tests/          model, service, statistical, and solver verification
 
 The [September 5 audit](docs/audit-2026-09-05.md) covers review history, PostgreSQL
 locking, timetable accuracy, dependency security, and GA-v6 development validation.
-The current solver identifiers are GA-v6 and CP-SAT-v4; earlier tuning reports
+The current solver identifiers are GA-v7 and CP-SAT-v5; earlier tuning reports
 remain historical. Rerun the registered equal-budget pilot before freezing profiles
 for the new build.
 
@@ -350,3 +350,7 @@ for the new build.
 - Solver output reflects the encoded data. Missing or incorrect authorization and availability records can make a real schedule appear infeasible; import validation and administrative review remain essential.
 - Schedule quality depends on a versioned weighting policy. Report sensitivity analyses and never change objective weights after inspecting final algorithm results.
 - This prototype supports scheduling decisions. Authorized USM personnel retain responsibility for policy exceptions, publication, and final use.
+
+### Routine generation reliability update
+
+Generate Schedule now defaults to finding the first independently validated timetable. The full-budget quality-improvement goal remains available, and research batches cannot use the early-stop mode. Large GA diagnostic counts are preserved exactly without overflowing the numeric metric column. After updating an existing installation, back up its database, run `python manage.py migrate`, and restart the web process and any Celery workers. Migration 0008 also repairs oversized legacy SQLite metric rows while retaining their diagnostic evidence. See [generation instructions](docs/user-guide.md#11-generate-a-test-schedule).

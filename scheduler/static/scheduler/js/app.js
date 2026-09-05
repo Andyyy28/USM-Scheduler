@@ -383,7 +383,7 @@
       if (status) {
         status.removeAttribute("role");
         status.dataset.state = "loading";
-        status.textContent = "Working… Please keep this page open.";
+        status.textContent = form.dataset.loadingMessage || "Working… Please keep this page open.";
       }
 
       try {
@@ -393,10 +393,17 @@
           method,
           body: new FormData(form),
           credentials: "same-origin",
-          headers: { "X-CSRFToken": csrf, "X-Requested-With": "XMLHttpRequest" },
+          headers: { "X-CSRFToken": csrf, "X-Requested-With": "XMLHttpRequest", "Accept": "application/json" },
         });
         const contentType = response.headers.get("content-type") || "";
-        const payload = contentType.includes("application/json") ? await response.json() : await response.text();
+        // A debug page, proxy failure or redirected login is not form feedback.
+        // Never echo an HTML response (including its traceback) into the page.
+        if (!contentType.includes("application/json")) {
+          throw new Error(response.status === 403 || response.redirected
+            ? "Your session may have expired. Sign in again, then retry."
+            : "The server could not complete this request. Check Generated schedules for a saved result before trying again. If this continues, ask the administrator to check the server logs.");
+        }
+        const payload = await response.json();
         if (!response.ok) {
           const normalized = normalizeApiError(payload, `Request failed (${response.status}).`);
           const requestError = new Error(normalized.summary);
@@ -409,7 +416,10 @@
           status.textContent = form.dataset.successMessage || "Request completed successfully.";
         }
         form.removeAttribute("aria-busy");
-        const destination = form.dataset.successUrl;
+        const resultRun = form.hasAttribute("data-run-form") && Array.isArray(payload) ? payload[0] : null;
+        const destination = resultRun?.id
+          ? `${form.dataset.successUrl}${encodeURIComponent(resultRun.id)}/`
+          : form.dataset.successUrl;
         window.setTimeout(() => {
           if (destination) window.location.assign(destination);
           else window.location.reload();

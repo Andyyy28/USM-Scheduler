@@ -30,7 +30,7 @@ from scheduler.api.serializers import (
 )
 from scheduler.services.problem_builder import ProblemBuildError, build_and_store_snapshot
 from scheduler.services.revision_metadata import with_dataset_counts
-from scheduler.services.runs import create_run, queue_run
+from scheduler.services.runs import RunDispatchError, create_run, queue_run
 from scheduler.services.statistics import describe, vargha_delaney_a12, wilson_interval
 from scheduler.services.workflow import (
     approve_schedule,
@@ -358,6 +358,11 @@ class RunListCreateView(APIView):
         for field in configurable_fields:
             if request.data.get(field) not in (None, ""):
                 configuration[field] = request.data[field]
+        if "first_feasible_only" in request.data:
+            value = request.data["first_feasible_only"]
+            if value not in (True, False, "true", "false"):
+                raise ValidationError({"first_feasible_only": "Choose a generation goal."})
+            configuration["first_feasible_only"] = value in (True, "true")
         queued = []
         for algorithm in algorithms:
             try:
@@ -369,6 +374,11 @@ class RunListCreateView(APIView):
                     configuration=configuration,
                 )
                 queued.append(queue_run(run))
+            except RunDispatchError as exc:
+                return Response(
+                    {"detail": str(exc), "run_id": run.pk},
+                    status=status.HTTP_503_SERVICE_UNAVAILABLE,
+                )
             except Exception as exc:
                 _translate_domain_error(exc)
         return Response(ScheduleRunSerializer(queued, many=True).data, status=status.HTTP_202_ACCEPTED)

@@ -26,7 +26,7 @@ except ImportError as exc:  # pragma: no cover - environment dependent
 else:
     _ORTOOLS_IMPORT_ERROR = None
 
-CP_SAT_IMPLEMENTATION_VERSION = "cp-sat-v4"
+CP_SAT_IMPLEMENTATION_VERSION = "cp-sat-v5"
 
 
 class ORToolsUnavailableError(RuntimeError):
@@ -50,6 +50,7 @@ if cp_model is not None:
             self._event_order = event_order
             self._variables = variables
             self._deadline = started_at + config.time_limit_seconds
+            self._first_feasible_only = config.first_feasible_only
             self.trace = IncumbentTrace(config.diagnostic_trace)
             self.assignments: tuple[Assignment, ...] = ()
             self.accepted_objective: int | None = None
@@ -73,13 +74,17 @@ if cp_model is not None:
             if completed_at > self._deadline:
                 self.StopSearch()
                 return
-            if objective is not None and round(self.ObjectiveValue()) == objective.weighted_total:
+            if objective is not None and (
+                self._first_feasible_only or round(self.ObjectiveValue()) == objective.weighted_total
+            ):
                 if self.first_feasible_seconds is None:
                     self.first_feasible_seconds = completed_at - self._started_at
                 self.assignments = assignments
                 self.accepted_objective = objective.weighted_total
-                self.best_bound = self.BestObjectiveBound()
+                self.best_bound = None if self._first_feasible_only else self.BestObjectiveBound()
                 self.trace.observe(completed_at - self._started_at, (0, objective.weighted_total))
+                if self._first_feasible_only:
+                    self.StopSearch()
             else:
                 self.rejection_reason = (
                     "CP-SAT returned an assignment rejected by the independent validator."
@@ -146,17 +151,17 @@ class CpSatSolver:
         )
         section_gap_expr = (
             _gap_expression(model, problem, variables, resource_kind="section")
-            if problem.objective_profile.section_gap_weight
+            if problem.objective_profile.section_gap_weight and not config.first_feasible_only
             else 0
         )
         instructor_gap_expr = (
             _gap_expression(model, problem, variables, resource_kind="instructor")
-            if problem.objective_profile.instructor_gap_weight
+            if problem.objective_profile.instructor_gap_weight and not config.first_feasible_only
             else 0
         )
         load_imbalance_expr = (
             _load_imbalance_expression(model, problem, variables)
-            if problem.objective_profile.load_imbalance_weight
+            if problem.objective_profile.load_imbalance_weight and not config.first_feasible_only
             else 0
         )
 
@@ -167,7 +172,10 @@ class CpSatSolver:
             + profile.instructor_gap_weight * instructor_gap_expr
             + profile.load_imbalance_weight * load_imbalance_expr
         )
-        model.Minimize(objective_expr)
+        # Routine generation can search hard constraints directly. Quality is
+        # still scored independently; it is not optimized or claimed optimal.
+        if not config.first_feasible_only:
+            model.Minimize(objective_expr)
         model_proto = model.Proto()
         model_variable_count = len(model_proto.variables)
         model_constraint_count = len(model_proto.constraints)
@@ -191,7 +199,7 @@ class CpSatSolver:
         if status in (SolverStatus.OPTIMAL, SolverStatus.FEASIBLE):
             if not assignments:
                 status = SolverStatus.NO_SOLUTION
-            elif runtime > config.time_limit_seconds or callback.accepted_objective != round(solver.ObjectiveValue()):
+            elif config.first_feasible_only or runtime > config.time_limit_seconds or callback.accepted_objective != round(solver.ObjectiveValue()):
                 status = SolverStatus.FEASIBLE
         elif status is SolverStatus.INFEASIBLE and runtime > config.time_limit_seconds:
             status = SolverStatus.NO_SOLUTION
@@ -203,11 +211,12 @@ class CpSatSolver:
         relative_gap: float | None = None
         if status in (SolverStatus.OPTIMAL, SolverStatus.FEASIBLE):
             objective_value = callback.accepted_objective
-            best_bound = (
-                solver.BestObjectiveBound()
-                if runtime <= config.time_limit_seconds else callback.best_bound
-            )
-            relative_gap = max(0.0, objective_value - best_bound) / max(1.0, abs(objective_value))
+            if not config.first_feasible_only:
+                best_bound = (
+                    solver.BestObjectiveBound()
+                    if runtime <= config.time_limit_seconds else callback.best_bound
+                )
+                relative_gap = max(0.0, objective_value - best_bound) / max(1.0, abs(objective_value))
             if not validation.feasible:
                 status = SolverStatus.ERROR
                 stopping_reason = "CP-SAT returned an assignment rejected by the independent validator."
@@ -216,13 +225,15 @@ class CpSatSolver:
                 stopping_reason = "CP-SAT objective disagrees with independent rescoring."
             else:
                 stopping_reason = (
-                    "Optimal solution proven."
+                    "Stopped after finding and validating a complete timetable."
+                    if config.first_feasible_only
+                    else "Optimal solution proven."
                     if status is SolverStatus.OPTIMAL
                     else "Time/search limit reached with a feasible incumbent."
                 )
         elif status is SolverStatus.INFEASIBLE:
             stopping_reason = "CP-SAT proved the problem infeasible."
-            best_bound = solver.BestObjectiveBound()
+            best_bound = None if config.first_feasible_only else solver.BestObjectiveBound()
         elif status is SolverStatus.ERROR:
             stopping_reason = callback.rejection_reason or "CP-SAT rejected the generated model as invalid."
         else:

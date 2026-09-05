@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from typing import Any
 
 from django.apps import apps
+from django.conf import settings
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import FieldError, ObjectDoesNotExist, PermissionDenied, ValidationError
 from django.db import DatabaseError, connection
@@ -654,14 +655,37 @@ def _diagnostic_summary(study: Any) -> SimpleNamespace:
 def _run_view(run: Any) -> SimpleNamespace:
     status = _display(run, "status", default="Unknown")
     status_value = str(_first(run, "status", default=status))
+    status = {
+        "FEASIBLE": "Schedule found", "OPTIMAL": "Best schedule found",
+        "TIMEOUT": "Time limit reached", "NO_SOLUTION": "No timetable found",
+        "INFEASIBLE": "Conflicting scheduling rules", "FAILED": "Generation failed",
+    }.get(status_value, status)
     algorithm = _display(run, "algorithm", default="Unspecified")
     runtime = _run_metric(run, "execution_seconds", "runtime_seconds", "execution_time_seconds")
     first_feasible = _run_metric(run, "first_feasible_seconds", "time_to_first_feasible")
+    configuration = _first(run, "configuration", default={}) or {}
+    limit = float(configuration.get("time_limit_seconds", settings.SOLVER_DEFAULT_TIME_LIMIT_SECONDS))
+    outcomes = {
+        "OPTIMAL": "A valid timetable was generated and its best quality score was proven.",
+        "FEASIBLE": "A valid timetable was generated. Open it to review the classes, rooms and times.",
+        "TIMEOUT": "The time limit ended before a valid timetable was found. This does not mean the semester is impossible to schedule.",
+        "NO_SOLUTION": "The search ended without a valid timetable. A different random seed or a longer search may help.",
+        "INFEASIBLE": "The scheduling rules cannot all be satisfied with this checked data. Review availability and locked classes in Prepare Data, then check the revised data again.",
+        "FAILED": "Generation stopped because of a system error. Try a new attempt. If it fails again, give the run identifier to the administrator so they can check the server logs.",
+        "CANCELLED": "This attempt was cancelled. You can start a new attempt when you are ready.",
+        "QUEUED": "This attempt is waiting for the scheduling worker. If it stays queued, ask the administrator to check that the worker is running.",
+        "RUNNING": "The solver is searching for a valid timetable. Refresh this page to check the result.",
+    }
     return SimpleNamespace(
         raw=run,
         id=str(_first(run, "pk", "id", default="")),
         algorithm=algorithm,
         status=status,
+        outcome=outcomes.get(status_value, "Check the generation details below."),
+        time_limit=f"{limit:g} seconds",
+        retry_time_limit=min(3600, max(300, int(limit * 2) if status_value == "TIMEOUT" else int(limit))),
+        algorithm_value=_first(run, "algorithm", default="CP_SAT"),
+        first_feasible_only=configuration.get("first_feasible_only", False),
         status_class="error" if status_value == "FAILED" else slugify(status_value.replace("_", "-")),
         term=str(
             _first(
@@ -687,7 +711,7 @@ def _run_view(run: Any) -> SimpleNamespace:
             "hard_violations",
             "validation.hard_violation_count",
             default="—",
-        ),
+        ) if status_value in {"FEASIBLE", "OPTIMAL"} or _first(run, "result_data.assignments") else "Not evaluated",
         objective=_run_metric(run, "objective", "objective_value", "quality_score", default="—"),
         retry_count=_run_metric(run, "retry_count", "retries", default="—"),
         room_utilization=_run_metric(run, "room_utilization", default="—"),
@@ -1074,6 +1098,11 @@ def runs(request: HttpRequest) -> HttpResponse:
                 aliases["error"] = "FAILED"
             filters[parameter] = aliases.get(slugify(value.replace("_", "-")), "__unknown__")
     rows = [_run_view(run) for run in _safe_list("ScheduleRun", limit=250, filters=filters)]
+    retry = None
+    if request.GET.get("retry"):
+        previous = _safe_get("ScheduleRun", request.GET["retry"])
+        if previous is not None:
+            retry = _run_view(previous)
     return _render(
         request,
         "scheduler/runs.html",
@@ -1085,6 +1114,8 @@ def runs(request: HttpRequest) -> HttpResponse:
         objective_profiles=objectives,
         selected_algorithm=algorithm,
         selected_status=status,
+        retry_run=retry,
+        local_execution=settings.CELERY_TASK_ALWAYS_EAGER,
     )
 
 

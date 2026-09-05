@@ -471,7 +471,7 @@ def test_complete_synthetic_browser_journey_and_rendered_states(live_server, tmp
         _database_call(create_render_state_runs)
         central_page.reload(wait_until="networkidle")
         expect(central_page.locator(".status").filter(has_text="Running")).to_be_visible()
-        expect(central_page.locator(".status").filter(has_text="Failed")).to_be_visible()
+        expect(central_page.locator(".status").filter(has_text="Generation failed")).to_be_visible()
 
         central_page.select_option("#run-snapshot", str(snapshot_id))
         central_page.select_option("#run-algorithm", models.SolverAlgorithm.CP_SAT)
@@ -658,4 +658,23 @@ def test_generate_schedule_renders_all_structured_preflight_issues(live_server) 
             "INSTRUCTOR_PROFILE_MISSING: Instructor FAC-404 has no availability profile."
         )
         expect(alert).not_to_contain_text("[object Object]")
+        # A Django debug page or expired-login redirect must never become the
+        # form's error text, including on narrow screens.
+        page.route(
+            "**/api/v1/runs/",
+            lambda route: route.fulfill(
+                status=500, content_type="text/html",
+                body="<!DOCTYPE html><html><body>Traceback SECRET_INTERNALS</body></html>",
+            ),
+        )
+        page.get_by_label("Checked semester data").select_option(str(snapshot.pk))
+        for width in (1440, 390):
+            page.set_viewport_size({"width": width, "height": 900})
+            page.get_by_role("button", name="Generate timetable", exact=True).click()
+            run_alert = page.locator("[data-run-form] [role=alert]")
+            expect(run_alert).to_contain_text("Check Generated schedules")
+            expect(run_alert).not_to_contain_text("SECRET_INTERNALS")
+            expect(run_alert).not_to_contain_text("<!DOCTYPE")
+            expect(page.get_by_role("button", name="Generate timetable", exact=True)).to_be_enabled()
+            assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
         browser.close()

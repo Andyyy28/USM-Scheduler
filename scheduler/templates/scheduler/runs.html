@@ -21,16 +21,18 @@
   </section>
 
   <section class="panel form-panel step-panel" id="new-run" aria-labelledby="new-run-title">
-    <div class="step-panel__heading"><span>2</span><div><p class="eyebrow">Generate</p><h2 id="new-run-title">Build a candidate timetable</h2><p>Generation runs in the background. You can leave this page and return later.</p></div></div>
-    <form class="form-grid" action="{% url 'api:runs' %}" method="post" data-api-form data-success-url="{% url 'scheduler:runs' %}">
+    <div class="step-panel__heading"><span>2</span><div><p class="eyebrow">Generate</p><h2 id="new-run-title">Build a candidate timetable</h2><p>{% if local_execution %}Keep this page open while generation runs. Your result will open automatically.{% else %}Submit an attempt to the scheduling worker, then open its result to check progress.{% endif %}</p></div></div>
+    <form class="form-grid" action="{% url 'api:runs' %}" method="post" data-api-form data-run-form data-loading-message="Generating your timetable… This may take up to the maximum run time. Keep this page open until the result appears." data-success-url="{% url 'scheduler:runs' %}">
       {% csrf_token %}
-      <div class="field"><label for="run-snapshot">Checked semester data</label><select id="run-snapshot" name="snapshot_id" required><option value="">Choose checked data</option>{% for snapshot in snapshots %}<option value="{{ snapshot.id }}">{{ snapshot.option_label }}</option>{% endfor %}</select><small>Run step 1 first if the correct semester is not listed.</small></div>
-      <div class="field"><label for="run-algorithm">Scheduling method</label><select id="run-algorithm" name="algorithm" required><option value="CP_SAT">Constraint solver (recommended)</option><option value="GA">Genetic Algorithm</option></select><small>The constraint solver is the default for routine schedule generation.</small></div>
-      <div class="field"><label for="run-time-limit">Maximum run time</label><input id="run-time-limit" name="time_limit_seconds" type="number" min="1" max="3600" value="300" required><small>Five minutes is suitable for the demonstration dataset.</small></div>
-      <div class="field"><label for="run-seed">Run number</label><input id="run-seed" name="seed" type="number" min="0" value="42" required><small>Keep this value when repeating the same attempt.</small></div>
+      <div class="field"><label for="run-snapshot">Checked semester data</label><select id="run-snapshot" name="snapshot_id" required><option value="">Choose checked data</option>{% for snapshot in snapshots %}<option value="{{ snapshot.id }}" {% if retry_run.snapshot_id == snapshot.id %}selected{% endif %}>{{ snapshot.option_label }}</option>{% endfor %}</select><small>Run step 1 first if the correct semester is not listed.</small></div>
+      <div class="field"><label for="run-algorithm">Scheduling method</label><select id="run-algorithm" name="algorithm" required><option value="CP_SAT" {% if retry_run.algorithm_value == 'CP_SAT' %}selected{% endif %}>Constraint solver (recommended)</option><option value="GA" {% if retry_run.algorithm_value == 'GA' %}selected{% endif %}>Genetic Algorithm</option></select><small>The constraint solver is the default for routine schedule generation.</small></div>
+      {% if retry_run %}<p class="form-actions--full">Settings copied from attempt #{{ retry_run.id }}. Submitting creates a new attempt and keeps the previous result.</p>{% endif %}
+      <div class="field form-actions--full"><label for="run-goal">Generation goal</label><select id="run-goal" name="first_feasible_only"><option value="true">Find a valid timetable (recommended)</option><option value="false">Use the full time to improve timetable quality</option></select><small>The recommended option stops after a complete timetable passes all scheduling rules. Quality improvement keeps searching for fewer gaps and better preferences.</small></div>
+      <div class="field"><label for="run-time-limit">Maximum run time (seconds)</label><input id="run-time-limit" name="time_limit_seconds" type="number" min="1" max="3600" value="{{ retry_run.retry_time_limit|default:300 }}" required><small>300 seconds = 5 minutes. If time runs out, try 600 seconds. A longer limit does not guarantee a timetable.</small></div>
+      <div class="field"><label for="run-seed">Random seed</label><input id="run-seed" name="seed" type="number" min="0" value="{% if retry_run %}{{ retry_run.seed }}{% else %}42{% endif %}" required><small>Keep 42 to start. A different number changes the search; it is not an attempt counter.</small></div>
       <div class="form-actions form-actions--full"><div class="form-status" data-form-status aria-live="polite"></div><button class="button button--primary" type="submit" {% if not snapshots %}disabled aria-disabled="true"{% endif %}>Generate timetable</button></div>
     </form>
-    <details class="explanation"><summary>About scheduling methods and run numbers</summary><p>Advanced settings support repeatable thesis evaluation. Most staff can keep the recommended method and default values.</p></details>
+    <details class="explanation"><summary>About scheduling methods and random seeds</summary><p>Advanced settings support repeatable thesis evaluation. Most staff can keep the recommended method and default values.</p></details>
   </section>
 </div>
 {% else %}
@@ -48,7 +50,7 @@
   </div>
   {% if runs %}
     <div class="table-wrap"><table><caption class="visually-hidden">Generated schedule history</caption><thead><tr><th scope="col">Method</th><th scope="col">Semester</th><th scope="col">Status</th><th scope="col">Runtime</th><th scope="col">Rule violations</th><th scope="col">Created</th><th scope="col"><span class="visually-hidden">Open</span></th></tr></thead><tbody>
-    {% for run in runs %}<tr><td><strong>{{ run.algorithm }}</strong><small class="cell-note">Run {{ run.seed }}</small></td><td>{{ run.term }}</td><td><span class="status status--{{ run.status_class }}">{{ run.status }}</span></td><td>{{ run.runtime }}</td><td>{{ run.hard_violations }}</td><td>{{ run.created_at|date:'M j, Y · H:i'|default:'—' }}</td><td><a class="table-link" href="{% url 'scheduler:run-detail' run.id %}">View result</a></td></tr>{% endfor %}
+    {% for run in runs %}<tr><td><strong>{{ run.algorithm }}</strong><small class="cell-note">Attempt #{{ run.id }}</small></td><td>{{ run.term }}</td><td><span class="status status--{{ run.status_class }}">{{ run.status }}</span></td><td>{{ run.runtime }}</td><td>{{ run.hard_violations }}</td><td>{{ run.created_at|date:'M j, Y · H:i'|default:'—' }}</td><td><a class="table-link" href="{% url 'scheduler:run-detail' run.id %}">View result</a></td></tr>{% endfor %}
     </tbody></table></div>
   {% else %}
     <div class="empty-state"><div><h3>No generated schedules found</h3><p>Clear the filters or complete the two steps above to generate one.</p></div></div>

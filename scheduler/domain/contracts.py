@@ -922,6 +922,7 @@ class SolverConfig:
     cp_model_presolve: bool = True
     linearization_level: int = 2
     diagnostic_trace: bool = False
+    first_feasible_only: bool = False
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "algorithm", SolverAlgorithm(self.algorithm))
@@ -954,6 +955,8 @@ class SolverConfig:
             raise ValueError("linearization_level must be 0, 1, or 2")
         if type(self.diagnostic_trace) is not bool:
             raise ValueError("diagnostic_trace must be Boolean")
+        if type(self.first_feasible_only) is not bool:
+            raise ValueError("first_feasible_only must be Boolean")
 
     @property
     def canonical_hash(self) -> str:
@@ -981,6 +984,8 @@ class SolverConfig:
             result["linearization_level"] = self.linearization_level
         if self.diagnostic_trace:
             result["diagnostic_trace"] = True
+        if self.first_feasible_only:
+            result["first_feasible_only"] = True
         return result
 
     @classmethod

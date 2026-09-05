@@ -124,7 +124,7 @@ def test_failed_queue_publish_releases_dispatch_claim_for_retry(monkeypatch) -> 
 
     monkeypatch.setattr(tasks.execute_schedule_run, "apply_async", fail_publish)
 
-    with pytest.raises(ConnectionError, match="synthetic broker outage"):
+    with pytest.raises(runs.RunDispatchError, match="worker could not be reached"):
         runs.queue_run(run)
 
     run.refresh_from_db()

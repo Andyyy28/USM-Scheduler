@@ -84,7 +84,7 @@ def test_failed_history_filter_and_archived_actions(schedule_setup):
     response = client.get(reverse("scheduler:runs"), {"status": "error"})
     assert [row.id for row in response.context["runs"]] == [str(schedule.run_id)]
     detail = client.get(reverse("scheduler:run-detail", args=[schedule.run_id]))
-    assert b"No timetable was created" in detail.content
+    assert b"Generation stopped because of a system error" in detail.content
     schedule.status = models.ScheduleStatus.ARCHIVED
     displayed = views._schedule_view(schedule)
     assert not displayed.approved and not displayed.can_lock

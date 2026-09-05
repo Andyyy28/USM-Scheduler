@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import math
 import os
 import platform
@@ -10,7 +11,7 @@ import sys
 import uuid
 from dataclasses import replace
 from datetime import timedelta
-from decimal import Decimal
+from decimal import Context, Decimal, InvalidOperation
 from importlib import metadata as package_metadata
 from time import perf_counter, process_time
 from typing import Any
@@ -34,6 +35,7 @@ from scheduler.services.problem_builder import load_problem
 from scheduler.solvers import CpSatSolver, GeneticAlgorithmSolver
 
 DEFAULT_INFRASTRUCTURE_GRACE_SECONDS = 60
+logger = logging.getLogger(__name__)
 DEFAULT_LEASE_RECONCILIATION_LIMIT = 500
 _RUNTIME_DISTRIBUTIONS = (
     "Django",
@@ -65,6 +67,10 @@ class RunClaimBusy(RuntimeError):
             f"Run {run_id} is already claimed until "
             f"{lease_expires_at.isoformat() if lease_expires_at else 'its active lease ends'}."
         )
+
+
+class RunDispatchError(RuntimeError):
+    """A run was saved, but the scheduling worker could not be reached."""
 
 
 def domain_algorithm(value: str) -> DomainAlgorithm:
@@ -115,6 +121,7 @@ def build_solver_config(run: models.ScheduleRun) -> SolverConfig:
         "cp_model_presolve": run.configuration.get("cp_model_presolve", True),
         "linearization_level": int(run.configuration.get("linearization_level", 2)),
         "diagnostic_trace": run.configuration.get("diagnostic_trace", False),
+        "first_feasible_only": run.configuration.get("first_feasible_only", False),
     }
     if values["mutation_rate"] is not None:
         values["mutation_rate"] = float(values["mutation_rate"])
@@ -280,12 +287,17 @@ def create_run(
         raise ValueError(f"Unsupported algorithm: {algorithm}")
     if purpose not in models.RunPurpose.values:
         raise ValueError(f"Unsupported run purpose: {purpose}")
+    config = dict(configuration or {})
+    if config.get("first_feasible_only"):
+        if experiment_batch is not None or purpose != models.RunPurpose.ROUTINE:
+            raise ValueError("Research comparisons must use the full optimization budget.")
+        included_in_analysis = False
+        exclusion_reason = "Routine first-feasible generation is not a full-budget research run."
     if included_in_analysis is None:
         included_in_analysis = purpose == models.RunPurpose.ROUTINE
     exclusion_reason = str(exclusion_reason).strip()
     if not included_in_analysis and not exclusion_reason:
         raise ValueError("Excluded runs require an explicit exclusion reason.")
-    config = dict(configuration or {})
     parent_schedule_id = config.get("parent_schedule_id")
     if parent_schedule_id not in (None, ""):
         parent = models.ScheduleVersion.objects.filter(pk=parent_schedule_id).first()
@@ -360,13 +372,22 @@ def queue_run(run: models.ScheduleRun) -> models.ScheduleRun:
         options["queue"] = queue_name
     try:
         execute_schedule_run.apply_async(args=[run.pk], **options)
-    except Exception:
+    except Exception as exc:
+        run.refresh_from_db()
+        if run.status == models.RunStatus.FAILED:
+            # Eager development execution has already saved the failure. Return
+            # that result just as an asynchronous worker would, not Django HTML.
+            return run
         models.ScheduleRun.objects.filter(
             pk=run.pk,
             status=models.RunStatus.QUEUED,
             task_id=task_id,
         ).update(task_id="")
-        raise
+        logger.exception("Could not dispatch schedule run %s", run.pk)
+        raise RunDispatchError(
+            f"Run {run.pk} was saved, but the scheduling worker could not be reached. "
+            "Ask the administrator to start the worker, then generate again."
+        ) from exc
     run.refresh_from_db()
     return run
 
@@ -627,6 +648,7 @@ def execute_run(
         )
         return persisted
     except Exception as exc:
+        logger.exception("Schedule run %s failed during execution", run_id)
         process_cpu_seconds = max(0.0, process_time() - process_started)
         peak_rss_mb = _peak_resident_memory_mb()
         failed_at = timezone.now()
@@ -642,6 +664,7 @@ def execute_run(
             heartbeat_at=failed_at,
             lease_expires_at=None,
             process_cpu_seconds=process_cpu_seconds,
+            execution_seconds=max(0.0, perf_counter() - task_started),
             peak_rss_mb=peak_rss_mb,
             stopping_reason="Unhandled solver error",
             error_message=f"{type(exc).__name__}: {exc}",
@@ -930,9 +953,18 @@ def persist_result(
     models.RunMetric.objects.filter(run=run).delete()
     metric_rows = []
     for name, value in result.metrics:
+        if isinstance(value, bool) or not isinstance(value, (int, float, Decimal)):
+            continue
         numeric = _finite_decimal(value)
         if numeric is not None:
             metric_rows.append(models.RunMetric(run=run, name=name, value=numeric))
+        elif isinstance(value, int) or (isinstance(value, float) and math.isfinite(value)):
+            # Combinatorial counts can exceed NUMERIC(24,6), or even float.
+            # Retain the exact diagnostic without poisoning every API read.
+            metric_rows.append(models.RunMetric(
+                run=run, name=name, value=None,
+                metadata={"exact_value": str(value), "storage": "outside_decimal_range"},
+            ))
     if result.first_feasible_seconds is not None:
         metric_rows.append(
             models.RunMetric(
@@ -1128,7 +1160,15 @@ def _finite_float(value: Any) -> float | None:
 
 
 def _finite_decimal(value: Any) -> Decimal | None:
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
+    if isinstance(value, bool) or not isinstance(value, (int, float, Decimal)):
         return None
-    converted = float(value)
-    return Decimal(str(converted)) if math.isfinite(converted) else None
+    converted = Decimal(value) if isinstance(value, int) else Decimal(str(value))
+    if not converted.is_finite() or abs(converted) >= Decimal(10) ** 18:
+        return None
+    try:
+        rounded = converted.quantize(Decimal("0.000001"), context=Context(prec=24))
+    except InvalidOperation:
+        return None
+    # SQLite uses floating storage; values rounding to 10**18 there also
+    # exceed the field on read. PostgreSQL shares the same portable range.
+    return rounded if abs(float(rounded)) < 1e18 else None

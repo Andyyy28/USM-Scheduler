@@ -29,7 +29,7 @@ from scheduler.solvers.tracing import IncumbentTrace
 
 Chromosome = tuple[int, ...]
 Fitness = tuple[int, int]
-GA_IMPLEMENTATION_VERSION = "ga-v6"
+GA_IMPLEMENTATION_VERSION = "ga-v7"
 _CACHE_GENE_BUDGET = 5_000_000
 _MIN_CACHE_ENTRIES = 100
 _MAX_CACHE_ENTRIES = 100_000
@@ -229,6 +229,7 @@ class GeneticAlgorithmSolver:
         search_space_exhausted = small_search_space and evaluated_count >= search_space_size
         while (
             len(population) < config.population_size
+            and not (config.first_feasible_only and timely_best is not None and timely_best.fitness[0] == 0)
             and initial_attempts < initial_attempt_limit
             and not search_space_exhausted
             and monotonic() < deadline
@@ -259,6 +260,7 @@ class GeneticAlgorithmSolver:
 
         while (
             monotonic() < deadline
+            and not (config.first_feasible_only and timely_best is not None and timely_best.fitness[0] == 0)
             and population
             and not search_space_exhausted
             and generations_without_new_evaluation < _STAGNANT_GENERATION_LIMIT
@@ -276,6 +278,7 @@ class GeneticAlgorithmSolver:
             offspring_attempt_limit = target_size * _MAX_OFFSPRING_ATTEMPT_MULTIPLIER
             while (
                 len(next_population) < target_size
+                and not (config.first_feasible_only and timely_best is not None and timely_best.fitness[0] == 0)
                 and offspring_attempts < offspring_attempt_limit
                 and monotonic() < deadline
             ):
@@ -338,7 +341,7 @@ class GeneticAlgorithmSolver:
             generation_completed = len(next_population) >= target_size and monotonic() < deadline
             if generation_completed:
                 search_diagnostics["completed_generations"] += 1
-                if timely_best is not None and timely_best.fitness[0] == 0:
+                if not config.first_feasible_only and timely_best is not None and timely_best.fitness[0] == 0:
                     phase_at = perf_counter() if config.diagnostic_trace else 0.0
                     improve_feasible(
                         events, timely_best.chromosome, timely_best.fitness,
@@ -376,7 +379,9 @@ class GeneticAlgorithmSolver:
         objective = score_schedule(problem, assignments) if timely_best else None
         if validation.feasible:
             status = SolverStatus.FEASIBLE
-            if search_space_exhausted:
+            if config.first_feasible_only:
+                stopping_reason = "Stopped after finding and validating a complete timetable."
+            elif search_space_exhausted:
                 stopping_reason = (
                     "The small search space was exhaustively evaluated; returning a "
                     "feasible incumbent without an optimality claim."

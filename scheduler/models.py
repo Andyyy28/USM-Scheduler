@@ -2259,7 +2259,7 @@ class ValidationResult(TimestampedModel):
 class RunMetric(TimestampedModel):
     run = models.ForeignKey(ScheduleRun, on_delete=models.CASCADE, related_name="metrics")
     name = models.CharField(max_length=100)
-    value = models.DecimalField(max_digits=24, decimal_places=6)
+    value = models.DecimalField(max_digits=24, decimal_places=6, null=True, blank=True)
     unit = models.CharField(max_length=40, blank=True)
     metadata = models.JSONField(default=dict, blank=True)
 

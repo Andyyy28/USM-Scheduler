@@ -1539,6 +1539,8 @@ tbody tr:hover {
 }
 
 .form-status {
+  min-width: 0;
+  overflow-wrap: anywhere;
   min-height: 1.3em;
   margin: 0;
   color: var(--muted);
